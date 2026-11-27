@@ -71,6 +71,7 @@ public:
 
     virtual void bufferBarrier(const RHIBuffer& buffer) = 0;
     virtual void textureBarrier(const RHITexture& texture, TextureLayout oldLayout, TextureLayout newLayout) = 0;
+    virtual void copyTexture(const RHITexture& src, const RHITexture& dst) = 0;
 };
 
 class RHIDevice {

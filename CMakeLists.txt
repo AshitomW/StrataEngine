@@ -61,6 +61,8 @@ set(SHADERS
     foliage.frag
     sky.vert
     sky.frag
+    water_spectrum.comp
+    water_ripples.comp
     water.vert
     water.frag
 )

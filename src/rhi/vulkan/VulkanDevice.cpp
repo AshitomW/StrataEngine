@@ -583,6 +583,33 @@ void VulkanRHICommandList::textureBarrier(const RHITexture& texture, TextureLayo
     vkCmdPipelineBarrier(m_cmd, src.stage, dst.stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
+void VulkanRHICommandList::copyTexture(const RHITexture& src, const RHITexture& dst) {
+    const auto& vkSrc = static_cast<const VulkanRHITexture&>(src);
+    const auto& vkDst = static_cast<const VulkanRHITexture&>(dst);
+
+    VkImageCopy region{};
+    region.srcSubresource.aspectMask = vkSrc.getAspectMask();
+    region.srcSubresource.mipLevel = 0;
+    region.srcSubresource.baseArrayLayer = 0;
+    region.srcSubresource.layerCount = 1;
+    region.dstSubresource.aspectMask = vkDst.getAspectMask();
+    region.dstSubresource.mipLevel = 0;
+    region.dstSubresource.baseArrayLayer = 0;
+    region.dstSubresource.layerCount = 1;
+    region.extent = {
+        std::min(vkSrc.getWidth(), vkDst.getWidth()),
+        std::min(vkSrc.getHeight(), vkDst.getHeight()),
+        1
+    };
+
+    vkCmdCopyImage(
+        m_cmd,
+        vkSrc.getVkImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vkDst.getVkImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &region
+    );
+}
+
 VulkanDevice::VulkanDevice(GLFWwindow* window)
     : m_context(window, true) {
     m_swapchain = std::make_unique<VulkanSwapchain>(m_context, window);

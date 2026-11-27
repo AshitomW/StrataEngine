@@ -396,6 +396,8 @@ public:
                 [m_computeEncoder setSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
             }
         } else if (m_renderEncoder) {
+            [m_renderEncoder setVertexTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
+            [m_renderEncoder setVertexSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
             [m_renderEncoder setFragmentTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
             [m_renderEncoder setFragmentSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
         }
@@ -472,6 +474,28 @@ public:
     void textureBarrier(const RHITexture& texture, TextureLayout oldLayout, TextureLayout newLayout) override {
         (void)texture; (void)oldLayout; (void)newLayout;
         // Metal tracks texture hazards automatically across encoders/dispatches on the same command buffer.
+    }
+
+    void copyTexture(const RHITexture& src, const RHITexture& dst) override {
+        endActiveEncoders();
+        const auto& mtlSrc = static_cast<const MetalRHITexture&>(src);
+        const auto& mtlDst = static_cast<const MetalRHITexture&>(dst);
+        id<MTLBlitCommandEncoder> blit = [m_cmdBuf blitCommandEncoder];
+        MTLSize copySize = MTLSizeMake(
+            std::min(mtlSrc.getWidth(), mtlDst.getWidth()),
+            std::min(mtlSrc.getHeight(), mtlDst.getHeight()),
+            1
+        );
+        [blit copyFromTexture:mtlSrc.getMTLTexture()
+                  sourceSlice:0
+                  sourceLevel:0
+                 sourceOrigin:MTLOriginMake(0, 0, 0)
+                   sourceSize:copySize
+                    toTexture:mtlDst.getMTLTexture()
+             destinationSlice:0
+             destinationLevel:0
+            destinationOrigin:MTLOriginMake(0, 0, 0)];
+        [blit endEncoding];
     }
 
     void endActiveEncoders() {

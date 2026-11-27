@@ -1,0 +1,75 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uPrevRipples;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outCurrRipples;
+
+layout(push_constant) uniform RipplePC {
+    vec4 rippleParams; // x: time, y: dt, z: rainIntensity, w: damping
+    vec4 cameraDelta;  // xy: UV scroll offset, zw: splash UV (0.5, 0.5) & strength
+} pc;
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outCurrRipples);
+    if (gid.x >= size.x || gid.y >= size.y) return;
+
+    vec2 texel = 1.0 / vec2(size);
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size) + pc.cameraDelta.xy;
+
+    if (any(lessThan(uv, vec2(0.01))) || any(greaterThan(uv, vec2(0.99)))) {
+        imageStore(outCurrRipples, gid, vec4(0.0));
+        return;
+    }
+
+    vec4 center = texture(uPrevRipples, uv);
+    float hC = center.r;
+    float vel = center.g;
+
+    float hL = texture(uPrevRipples, uv - vec2(texel.x, 0.0)).r;
+    float hR = texture(uPrevRipples, uv + vec2(texel.x, 0.0)).r;
+    float hD = texture(uPrevRipples, uv - vec2(0.0, texel.y)).r;
+    float hU = texture(uPrevRipples, uv + vec2(0.0, texel.y)).r;
+
+    float laplacian = (hL + hR + hD + hU) - 4.0 * hC;
+    float dt = clamp(pc.rippleParams.y, 0.001, 0.025);
+    float c2 = 180.0;
+    float damping = pc.rippleParams.w;
+
+    vel += (c2 * laplacian) * dt;
+    vel *= exp(-damping * dt);
+    float hNext = hC + vel * dt;
+
+    // Gentle ambient raindrops / surface splashes
+    float rainStrength = pc.rippleParams.z;
+    if (rainStrength > 0.001) {
+        float bucket = floor(pc.rippleParams.x * 24.0);
+        vec2 dropUV = vec2(hash12(vec2(bucket, 1.3)), hash12(vec2(bucket, 7.9)));
+        float d = length(uv - dropUV);
+        if (d < 0.015) {
+            hNext += (1.0 - d / 0.015) * 0.35 * rainStrength;
+        }
+    }
+
+    // Camera proximity wake if near water surface
+    float wakeStrength = pc.cameraDelta.w;
+    if (wakeStrength > 0.001) {
+        float dCam = length(uv - vec2(0.5));
+        if (dCam < 0.025) {
+            hNext += (1.0 - dCam / 0.025) * 0.20 * wakeStrength;
+        }
+    }
+
+    hNext = clamp(hNext, -1.0, 1.0);
+    // Store finite-difference gradient in ZW for fast vertex/fragment normal lookup
+    float dX = (hR - hL) * 0.5;
+    float dZ = (hU - hD) * 0.5;
+    imageStore(outCurrRipples, gid, vec4(hNext, vel, dX, dZ));
+}

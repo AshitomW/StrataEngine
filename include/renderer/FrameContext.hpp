@@ -4,13 +4,17 @@
 #include "camera/Camera.hpp"
 #include "terrain/TerrainTypes.hpp"
 
+class AtmosphereRenderer;
 class ShadowRenderer;
 
 struct FrameContext {
     rhi::RHICommandList* cmd = nullptr;
     uint32_t frameIndex = 0;
     const rhi::RHIBuffer* globalUBO = nullptr;
+    const AtmosphereRenderer* atmosphere = nullptr;
     const ShadowRenderer* shadows = nullptr;
+    const rhi::RHITexture* opaqueColor = nullptr;
+    const rhi::RHITexture* opaqueDepth = nullptr;
     const Camera* camera = nullptr;
     const TerrainConfig* config = nullptr;
     float time = 0.0f;

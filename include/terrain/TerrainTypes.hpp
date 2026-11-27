@@ -150,6 +150,9 @@ struct TerrainConfig {
     float waveAmplitude = EngineConstants::Water::DEFAULT_WAVE_AMPLITUDE;
     float waveSpeed = EngineConstants::Water::DEFAULT_WAVE_SPEED;
     float waterClarity = EngineConstants::Water::DEFAULT_WATER_CLARITY;
+    float windSpeed = 9.0f;
+    float waveChoppiness = 0.85f;
+    bool interactiveRipples = true;
 
     // Milestone 2: HDR, Physical Atmosphere & Post-Processing
     float exposure = 1.0f;

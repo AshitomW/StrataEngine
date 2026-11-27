@@ -145,15 +145,23 @@ void Renderer::createScreenResources(uint32_t width, uint32_t height) {
     hdrDesc.width = width;
     hdrDesc.height = height;
     hdrDesc.format = rhi::Format::RGBA16F;
-    hdrDesc.usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled;
+    hdrDesc.usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled | rhi::TextureUsage::TransferSrc;
     m_hdrColor = m_device.createTexture(hdrDesc);
 
     rhi::TextureDesc depthDesc{};
     depthDesc.width = width;
     depthDesc.height = height;
     depthDesc.format = rhi::Format::D32F;
-    depthDesc.usage = rhi::TextureUsage::DepthAttachment | rhi::TextureUsage::Sampled;
+    depthDesc.usage = rhi::TextureUsage::DepthAttachment | rhi::TextureUsage::Sampled | rhi::TextureUsage::TransferSrc;
     m_sceneDepth = m_device.createTexture(depthDesc);
+
+    rhi::TextureDesc copyColorDesc = hdrDesc;
+    copyColorDesc.usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::TransferDst;
+    m_opaqueColorCopy = m_device.createTexture(copyColorDesc);
+
+    rhi::TextureDesc copyDepthDesc = depthDesc;
+    copyDepthDesc.usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::TransferDst;
+    m_opaqueDepthCopy = m_device.createTexture(copyDepthDesc);
 
     uint32_t mw = std::max(1u, width / 2);
     uint32_t mh = std::max(1u, height / 2);
@@ -174,6 +182,8 @@ void Renderer::createScreenResources(uint32_t width, uint32_t height) {
     m_device.executeImmediateCompute([&](rhi::RHICommandList& cmd) {
         cmd.textureBarrier(*m_hdrColor, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
         cmd.textureBarrier(*m_sceneDepth, rhi::TextureLayout::Undefined, rhi::TextureLayout::DepthAttachment);
+        cmd.textureBarrier(*m_opaqueColorCopy, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
+        cmd.textureBarrier(*m_opaqueDepthCopy, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
         for (uint32_t i = 0; i < BLOOM_MIP_COUNT; ++i) {
             cmd.textureBarrier(*m_bloomDownMips[i], rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
             if (i < BLOOM_MIP_COUNT - 1) {
@@ -403,6 +413,10 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
             }
             ImGui::SliderFloat("Wave Amplitude [B/N]", &config.waveAmplitude, 0.0f, 2.5f, "%.2f m");
             ImGui::SliderFloat("Wave Speed", &config.waveSpeed, 0.0f, 3.0f, "%.2f x");
+            ImGui::SliderFloat("Water Clarity", &config.waterClarity, 0.05f, 1.5f, "%.2f");
+            ImGui::SliderFloat("Wind Speed", &config.windSpeed, 1.0f, 25.0f, "%.1f m/s");
+            ImGui::SliderFloat("Wave Choppiness", &config.waveChoppiness, 0.0f, 1.5f, "%.2f");
+            ImGui::Checkbox("Interactive Ripples", &config.interactiveRipples);
 
             ImGui::Separator();
             ImGui::Checkbox("Show Foliage [E]", &config.showFoliage);
@@ -458,7 +472,7 @@ bool Renderer::renderFrame(
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
 
-    // 1. Physical Sky-View LUT
+    // 1. Physical Sky-View LUT & GPU Water Simulation
     m_atmosphereRenderer->updateSkyView(
         *cmd,
         sky.sunDir,
@@ -467,11 +481,12 @@ bool Renderer::renderFrame(
         config.mieAnisotropy,
         config.sunIntensity
     );
+    m_waterRenderer->updateSimulation(*cmd, camera, config, time);
 
     // 2. 4-Cascade Shadow Atlas
     m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, frameIndex, config);
 
-    // 3. Offscreen Linear HDR Render Pass
+    // 3. Offscreen Linear HDR Render Pass A (Opaque: Sky, Terrain, Foliage)
     rhi::RenderPassDesc hdrPass{};
     hdrPass.colorTarget = m_hdrColor.get();
     hdrPass.depthTarget = m_sceneDepth.get();
@@ -491,7 +506,10 @@ bool Renderer::renderFrame(
     frame.cmd = cmd;
     frame.frameIndex = frameIndex;
     frame.globalUBO = m_uboBuffers[frameIndex].get();
+    frame.atmosphere = m_atmosphereRenderer.get();
     frame.shadows = m_shadowRenderer.get();
+    frame.opaqueColor = m_opaqueColorCopy.get();
+    frame.opaqueDepth = m_opaqueDepthCopy.get();
     frame.camera = &camera;
     frame.config = &config;
     frame.time = time;
@@ -515,11 +533,35 @@ bool Renderer::renderFrame(
         m_foliageRenderer->recordRenderCommands(frame);
     }
 
-    if (config.showWater && !config.wireframe) {
-        m_waterRenderer->recordRenderCommands(frame);
-    }
-
     cmd->endRenderPass();
+
+    // 4. Copy Opaque Color & Depth for Water Refraction, then Render Water (Pass B)
+    if (config.showWater && !config.wireframe) {
+        cmd->textureBarrier(*m_hdrColor, rhi::TextureLayout::ColorAttachment, rhi::TextureLayout::TransferSrc);
+        cmd->textureBarrier(*m_opaqueColorCopy, rhi::TextureLayout::ShaderReadOnly, rhi::TextureLayout::TransferDst);
+        cmd->copyTexture(*m_hdrColor, *m_opaqueColorCopy);
+        cmd->textureBarrier(*m_opaqueColorCopy, rhi::TextureLayout::TransferDst, rhi::TextureLayout::ShaderReadOnly);
+        cmd->textureBarrier(*m_hdrColor, rhi::TextureLayout::TransferSrc, rhi::TextureLayout::ColorAttachment);
+
+        cmd->textureBarrier(*m_sceneDepth, rhi::TextureLayout::DepthAttachment, rhi::TextureLayout::TransferSrc);
+        cmd->textureBarrier(*m_opaqueDepthCopy, rhi::TextureLayout::ShaderReadOnly, rhi::TextureLayout::TransferDst);
+        cmd->copyTexture(*m_sceneDepth, *m_opaqueDepthCopy);
+        cmd->textureBarrier(*m_opaqueDepthCopy, rhi::TextureLayout::TransferDst, rhi::TextureLayout::ShaderReadOnly);
+        cmd->textureBarrier(*m_sceneDepth, rhi::TextureLayout::TransferSrc, rhi::TextureLayout::DepthAttachment);
+
+        rhi::RenderPassDesc waterPass{};
+        waterPass.colorTarget = m_hdrColor.get();
+        waterPass.depthTarget = m_sceneDepth.get();
+        waterPass.clearColorEnable = false;
+        waterPass.clearDepthEnable = false;
+        cmd->beginRenderPass(waterPass);
+        cmd->setViewport(0.0f, 0.0f, w, h);
+        cmd->setScissor(0, 0, swW, swH);
+
+        m_waterRenderer->recordRenderCommands(frame);
+
+        cmd->endRenderPass();
+    }
 
     // 4. Barriers + Half-Res GTAO + Bloom Pyramid
     cmd->textureBarrier(*m_hdrColor, rhi::TextureLayout::ColorAttachment, rhi::TextureLayout::ShaderReadOnly);

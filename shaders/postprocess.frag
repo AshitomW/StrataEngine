@@ -77,16 +77,36 @@ vec3 reinhard_extended(vec3 x, float whitePt) {
 }
 
 void main() {
-    vec3 hdr = texture(uHdrColor, inUV).rgb;
-    vec3 bloom = texture(uBloomTex, inUV).rgb;
-    float depth = texture(uSceneDepth, inUV).r;
-    float ao = (depth < 0.9999) ? mix(1.0, texture(uAoTex, inUV).r, clamp(ubo.shadowParams.z, 0.0, 1.0)) : 1.0;
+    bool underwater = (ubo.cameraPos.y < ubo.terrainParams.x);
+    vec2 sampleUV = inUV;
+    if (underwater) {
+        float t = ubo.terrainParams.z;
+        sampleUV += vec2(sin(inUV.y * 18.0 + t * 2.8), cos(inUV.x * 16.0 + t * 2.3)) * 0.0035;
+        sampleUV = clamp(sampleUV, vec2(0.002), vec2(0.998));
+    }
+
+    vec3 hdr = texture(uHdrColor, sampleUV).rgb;
+    vec3 bloom = texture(uBloomTex, sampleUV).rgb;
+    float depth = texture(uSceneDepth, sampleUV).r;
+    float ao = (depth < 0.9999) ? mix(1.0, texture(uAoTex, sampleUV).r, clamp(ubo.shadowParams.z, 0.0, 1.0)) : 1.0;
+
+    hdr *= ao;
+
+    if (underwater) {
+        vec2 ndc = sampleUV * 2.0 - 1.0;
+        vec4 viewPos = inverse(ubo.proj) * vec4(ndc, depth, 1.0);
+        float viewDist = (depth >= 0.9999) ? 160.0 : length(viewPos.xyz / max(viewPos.w, 1e-5));
+        vec3 uwSigma = vec3(0.18, 0.055, 0.028);
+        vec3 uwTrans = exp(-viewDist * uwSigma);
+        vec3 uwScatter = vec3(0.015, 0.12, 0.18) * max(ubo.sunColor.a, 0.25);
+        hdr = mix(uwScatter, hdr * uwTrans, uwTrans.b);
+    }
 
     float exposure = max(ubo.postParams.x, 0.05);
     float bloomIntensity = max(ubo.postParams.y, 0.0);
     int toneMapper = int(ubo.postParams.w + 0.5);
 
-    vec3 color = (hdr * ao + bloom * bloomIntensity) * exposure;
+    vec3 color = (hdr + bloom * bloomIntensity) * exposure;
 
     // Subtle edge vignette
     vec2 centered = inUV * 2.0 - 1.0;

@@ -118,6 +118,7 @@ public:
 
     void bufferBarrier(const RHIBuffer& buffer) override;
     void textureBarrier(const RHITexture& texture, TextureLayout oldLayout, TextureLayout newLayout) override;
+    void copyTexture(const RHITexture& src, const RHITexture& dst) override;
 
     VkCommandBuffer getVkCommandBuffer() const { return m_cmd; }
 

@@ -97,6 +97,8 @@ private:
     uint32_t m_screenHeight = 0;
     std::unique_ptr<rhi::RHITexture> m_hdrColor;
     std::unique_ptr<rhi::RHITexture> m_sceneDepth;
+    std::unique_ptr<rhi::RHITexture> m_opaqueColorCopy;
+    std::unique_ptr<rhi::RHITexture> m_opaqueDepthCopy;
     std::unique_ptr<rhi::RHITexture> m_blackFallbackTex;
     std::unique_ptr<rhi::RHITexture> m_whiteFallbackTex;
     std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT> m_bloomDownMips;
