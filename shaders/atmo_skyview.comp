@@ -112,11 +112,11 @@ void main() {
         float sunCos = dot(up, sunDir);
         vec3 sunTrans = texture(uTransmittanceLUT, transmittanceUV(r, sunCos)).rgb;
 
-        float sunVis = smoothstep(-0.045, 0.045, sunCos);
+        float sunVis = smoothstep(-0.10, 0.06, sunCos);
         vec3 singleScatter = sunVis * (sunTrans * (rayScatter * pRay + vec3(mieScatter * pMie)));
 
         vec2 msUV = vec2(sunCos * 0.5 + 0.5, clamp(h / (R_ATMO - R_PLANET), 0.0, 1.0));
-        vec3 multiScatter = texture(uMultiScatterLUT, msUV).rgb * (rayScatter + vec3(mieScatter));
+        vec3 multiScatter = texture(uMultiScatterLUT, msUV).rgb * (rayScatter + vec3(mieScatter)) * smoothstep(-0.14, 0.06, sunCos);
 
         vec3 inScatter = (singleScatter + multiScatter) * sunIrradiance;
         vec3 safeExt = max(extinct, vec3(1e-6));
@@ -125,7 +125,7 @@ void main() {
     }
 
     // Subtle night sky airglow when sun is below horizon
-    float nightBlend = smoothstep(0.02, -0.20, sunDir.y);
+    float nightBlend = smoothstep(0.06, -0.22, sunDir.y);
     vec3 nightGlow = mix(vec3(0.012, 0.020, 0.042), vec3(0.004, 0.007, 0.018), clamp(rd.y * 0.8 + 0.2, 0.0, 1.0));
     L += nightGlow * nightBlend;
 

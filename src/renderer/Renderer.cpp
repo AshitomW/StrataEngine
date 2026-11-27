@@ -90,7 +90,7 @@ void Renderer::createPipelines() {
     solidDesc.hasDepth = true;
     solidDesc.usesUniformBuffer = true;
     solidDesc.usesStorageBuffer = true;
-    solidDesc.numSampledTextures = 3; // ShadowAtlas, MaterialAlbedo, MaterialNormalORM
+    solidDesc.numSampledTextures = 4; // ShadowAtlas, MaterialAlbedo, MaterialNormalORM, SkyViewLUT
     solidDesc.pushConstantSize = sizeof(ChunkPushConstants);
     solidDesc.pushConstantStages = rhi::ShaderStage::Vertex;
 
@@ -548,7 +548,7 @@ bool Renderer::renderFrame(
     m_atmosphereRenderer->updateSkyView(
         *cmd,
         sky.sunDir,
-        sky.sunColor,
+        glm::vec3(1.0f, 0.96f, 0.90f),
         config.turbidity,
         config.mieAnisotropy,
         config.sunIntensity
@@ -593,6 +593,7 @@ bool Renderer::renderFrame(
     cmd->bindTexture(0, m_shadowRenderer->getShadowAtlas(), m_shadowRenderer->getShadowSampler());
     cmd->bindTexture(1, m_materialLibrary->getAlbedoHeightArray(), m_materialLibrary->getMaterialSampler());
     cmd->bindTexture(2, m_materialLibrary->getNormalORMArray(), m_materialLibrary->getMaterialSampler());
+    cmd->bindTexture(3, m_atmosphereRenderer->getSkyViewLUT(), m_atmosphereRenderer->getLinearSampler());
 
     Frustum frustum = Frustum::fromViewProj(camera.getViewProjMatrix());
     chunkManager.recordRenderCommands(*cmd, frustum, config);

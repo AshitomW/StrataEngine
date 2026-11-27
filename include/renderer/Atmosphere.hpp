@@ -39,9 +39,9 @@ inline State compute(float timeOfDay) {
     s.sunDir = glm::normalize(glm::vec3(cosElev * 0.80f, sinElev, 0.35f));
     glm::vec3 moonDir = glm::normalize(glm::vec3(-cosElev * 0.80f, -sinElev, -0.35f));
 
-    float tHorizonToDay = smoothstep(-0.02f, 0.72f, sinElev);
-    float tDuskToSunset = smoothstep(-0.14f, 0.14f, sinElev);
-    float tNightToDusk = smoothstep(-0.28f, -0.02f, sinElev);
+    float tHorizonToDay = smoothstep(-0.02f, 0.68f, sinElev);
+    float tDuskToSunset = smoothstep(-0.06f, 0.14f, sinElev);
+    float tNightToDusk = smoothstep(-0.20f, 0.02f, sinElev);
 
     glm::vec3 zenithDusk   = glm::mix(NIGHT_ZENITH, DUSK_ZENITH, tNightToDusk);
     glm::vec3 zenithSunset = glm::mix(zenithDusk, SUNSET_ZENITH, tDuskToSunset);
@@ -51,8 +51,8 @@ inline State compute(float timeOfDay) {
     glm::vec3 horizSunset  = glm::mix(horizDusk, SUNSET_HORIZON, tDuskToSunset);
     s.skyHorizon           = glm::mix(horizSunset, NOON_HORIZON, tHorizonToDay);
 
-    float sunWeight = smoothstep(-0.06f, 0.12f, sinElev);
-    float moonWeight = smoothstep(0.02f, -0.18f, sinElev);
+    float sunWeight = smoothstep(-0.04f, 0.14f, sinElev);
+    float moonWeight = smoothstep(-0.05f, -0.22f, sinElev);
     glm::vec3 sunCol = glm::mix(DUSK_SUN * DUSK_SUN_INTENSITY,
                                 glm::mix(SUNSET_SUN * SUNSET_SUN_INTENSITY, NOON_SUN * NOON_SUN_INTENSITY, tHorizonToDay),
                                 tDuskToSunset);
@@ -63,11 +63,11 @@ inline State compute(float timeOfDay) {
     float ambSunset   = glm::mix(ambTwilight, SUNSET_AMBIENT, tDuskToSunset);
     s.ambientIntensity = glm::mix(ambSunset, NOON_AMBIENT, tHorizonToDay);
 
-    s.dayFactor = smoothstep(-0.14f, 0.20f, sinElev);
-    s.starFactor = 1.0f - smoothstep(-0.22f, 0.04f, sinElev);
+    s.dayFactor = smoothstep(-0.14f, 0.18f, sinElev);
+    s.starFactor = 1.0f - smoothstep(-0.20f, 0.05f, sinElev);
 
-    // Switch shadow/directional light seamlessly while direct sun/moon intensity is near zero
-    s.activeLightDir = (sinElev >= -0.05f) ? s.sunDir : moonDir;
+    // Switch shadow/directional light seamlessly while both sunWeight and moonWeight are zero
+    s.activeLightDir = (sinElev >= -0.045f) ? s.sunDir : moonDir;
 
     float clearBlend = smoothstep(-0.22f, 0.25f, sinElev);
     s.skyClearColor = glm::vec4(

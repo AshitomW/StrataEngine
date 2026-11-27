@@ -1,4 +1,5 @@
 #include "renderer/FoliageRenderer.hpp"
+#include "renderer/AtmosphereRenderer.hpp"
 #include "renderer/ShadowRenderer.hpp"
 #include "terrain/TerrainNoiseCPU.hpp"
 #include <cmath>
@@ -234,7 +235,7 @@ void FoliageRenderer::createPipeline(rhi::RHIDevice& device) {
     desc.hasDepth = true;
     desc.usesUniformBuffer = true;
     desc.usesStorageBuffer = false;
-    desc.numSampledTextures = 1;
+    desc.numSampledTextures = 2; // ShadowAtlas, SkyViewLUT
 
     m_pipeline = device.createGraphicsPipeline(desc);
 }
@@ -513,6 +514,9 @@ void FoliageRenderer::recordRenderCommands(const FrameContext& frame) {
     cmd.bindUniformBuffer(0, *frame.globalUBO);
     if (frame.shadows) {
         cmd.bindTexture(0, frame.shadows->getShadowAtlas(), frame.shadows->getShadowSampler());
+    }
+    if (frame.atmosphere) {
+        cmd.bindTexture(1, frame.atmosphere->getSkyViewLUT(), frame.atmosphere->getLinearSampler());
     }
     cmd.bindIndexBuffer(*m_indexBuffer);
     cmd.bindVertexBuffer(0, *m_vertexBuffer);

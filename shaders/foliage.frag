@@ -32,8 +32,17 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uShadowAtlas;
+layout(set = 2, binding = 1) uniform sampler2D uSkyViewLUT;
 
 const float PI = 3.14159265359;
+
+vec2 dirToSkyViewUV(vec3 dir) {
+    float azimuth = atan(dir.z, dir.x);
+    float u = azimuth / (2.0 * PI) + 0.5;
+    float lat = asin(clamp(dir.y, -1.0, 1.0));
+    float v = 0.5 + 0.5 * sign(lat) * sqrt(abs(lat) / (PI * 0.5));
+    return vec2(u, clamp(v, 0.002, 0.998));
+}
 
 float hash31F(vec3 p) {
     p = fract(p * vec3(443.897, 441.423, 437.195));
@@ -120,8 +129,10 @@ void main() {
 
     vec3 directLight = (sunRadiance * ((NdotL * 0.85 + wrapLight) / PI + sss / PI) + sunRadiance * spec) * shadow;
 
-    vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a * 1.65;
-    vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.42 * ubo.skyColorZenith.a;
+    vec3 skyZenithLUT  = texture(uSkyViewLUT, dirToSkyViewUV(vec3(0.0, 0.85, 0.1))).rgb;
+    vec3 skyHorizonLUT = texture(uSkyViewLUT, dirToSkyViewUV(normalize(vec3(D.x, 0.06, D.z)))).rgb;
+    vec3 skyAmb = skyZenithLUT * 0.55 + ubo.skyColorZenith.rgb * ubo.skyColorZenith.a * 0.95 + vec3(0.015, 0.022, 0.038);
+    vec3 groundAmb = skyHorizonLUT * 0.28 + ubo.skyColorHorizon.rgb * 0.25 * ubo.skyColorZenith.a + vec3(0.010, 0.012, 0.018);
     vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5) * iblStrength;
 
     vec3 albedo = inColor;
@@ -167,14 +178,11 @@ void main() {
     float distFog = clamp(max(expFog, edgeFade), 0.0, 1.0);
     float fogFactor = clamp(distFog + valleyFog, 0.0, 1.0);
 
-    float elevation = clamp(D.y * 0.75 + 0.25, 0.0, 1.0);
-    vec3 horizonAtmosphere = mix(ubo.skyColorHorizon.rgb, ubo.skyColorZenith.rgb, elevation);
-
-    float sunDot = max(dot(D, L), 0.0);
-    float g = clamp(ubo.atmosphereParams.y, 0.1, 0.95);
-    float mie = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * sunDot, 1e-4), 1.5) * 0.06;
-    float sunGlow = pow(sunDot, 16.0) * 0.20 + mie * 0.65;
-    vec3 fogColor = horizonAtmosphere + ubo.sunColor.rgb * sunGlow * sunIntensity * 0.45 * ubo.sunColor.a;
+    vec3 fogDir = normalize(vec3(D.x, max(D.y, 0.015), D.z));
+    vec3 skyFog = texture(uSkyViewLUT, dirToSkyViewUV(fogDir)).rgb;
+    float stormDim = smoothstep(0.60, 0.98, clamp(ubo.weatherParams.x, 0.0, 1.0));
+    vec3 stormTint = mix(vec3(0.06, 0.07, 0.09), vec3(0.28, 0.30, 0.34), ubo.sunColor.a);
+    vec3 fogColor = mix(skyFog, stormTint, stormDim * 0.65);
 
     vec3 finalColor = mix(litColor, fogColor, fogFactor);
     outColor = vec4(max(finalColor, vec3(0.0)), 1.0);
