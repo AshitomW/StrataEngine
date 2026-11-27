@@ -210,6 +210,8 @@ void Renderer::updateUBO(uint32_t frameIndex, const Camera& camera, const Terrai
     ubo.viewProj = camera.getViewProjMatrix();
     ubo.view = camera.getViewMatrix();
     ubo.proj = camera.getProjMatrix();
+    ubo.invViewProj = glm::inverse(ubo.viewProj);
+    ubo.invProj = glm::inverse(ubo.proj);
     ubo.cameraPos = glm::vec4(camera.getPosition(), config.timeOfDay);
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
@@ -541,10 +543,8 @@ bool Renderer::renderFrame(
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
 
-    // 0. Zero-Stall In-Frame Compute Chunk Streaming
     chunkManager.recordDirtyChunkCompute(*cmd, config, static_cast<uint32_t>(std::max(1, config.chunkBudgetPerFrame)));
 
-    // 1. Physical Sky-View LUT & GPU Water Simulation
     m_atmosphereRenderer->updateSkyView(
         *cmd,
         sky.sunDir,
@@ -555,10 +555,8 @@ bool Renderer::renderFrame(
     );
     m_waterRenderer->updateSimulation(*cmd, camera, config, time);
 
-    // 2. 4-Cascade Shadow Atlas (Terrain + Foliage)
     m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, frameIndex, config);
 
-    // 3. Offscreen Linear HDR Render Pass A (Opaque: Sky, Terrain, Foliage)
     rhi::RenderPassDesc hdrPass{};
     hdrPass.colorTarget = m_hdrColor.get();
     hdrPass.depthTarget = m_sceneDepth.get();
@@ -587,8 +585,6 @@ bool Renderer::renderFrame(
     frame.time = time;
     frame.screenSize = glm::vec2(w, h);
 
-    m_skyRenderer->recordRenderCommands(frame, *m_atmosphereRenderer);
-
     const rhi::RHIPipeline& activePipeline = (config.wireframe && m_wireframePipeline && m_wireframePipeline->isValid())
         ? *m_wireframePipeline
         : *m_solidPipeline;
@@ -605,9 +601,11 @@ bool Renderer::renderFrame(
         m_foliageRenderer->recordRenderCommands(frame);
     }
 
+    // Draw sky last in opaque pass so hardware early-Z skips obscured terrain/foliage pixels
+    m_skyRenderer->recordRenderCommands(frame, *m_atmosphereRenderer);
+
     cmd->endRenderPass();
 
-    // 4. Copy Opaque Color & Depth for Water Refraction, then Render Water + Precipitation (Pass B)
     bool hasWaterPass = (config.showWater && !config.wireframe);
     bool hasPrecipPass = (config.precipitationIntensity > 0.01f && config.precipitationType >= 0.5f && !config.wireframe);
 

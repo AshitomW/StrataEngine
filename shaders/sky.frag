@@ -7,6 +7,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 viewProj;
     mat4 view;
     mat4 proj;
+    mat4 invViewProj;
+    mat4 invProj;
     vec4 cameraPos;
     vec4 sunDir;
     vec4 sunColor;
@@ -76,8 +78,8 @@ float sampleCloudDensity(vec3 p, float coverage, float time, float windSpeed) {
 
 void main() {
     vec2 ndc = inUV * 2.0 - 1.0;
-    vec4 target = inverse(ubo.proj) * vec4(ndc.x, ndc.y, 1.0, 1.0);
-    vec3 rayDir = normalize((inverse(ubo.view) * vec4(target.xyz / target.w, 0.0)).xyz);
+    vec4 wp = ubo.invViewProj * vec4(ndc.x, ndc.y, 1.0, 1.0);
+    vec3 rayDir = normalize(wp.xyz / max(wp.w, 1e-5) - ubo.cameraPos.xyz);
 
     float time = ubo.terrainParams.z;
     float sinElev = ubo.sunDir.w;
@@ -140,7 +142,7 @@ void main() {
         tMax = min(tMax, 14000.0);
 
         if (tMax > tMin) {
-            const int STEPS = 26;
+            const int STEPS = 16;
             float dt = (tMax - tMin) / float(STEPS);
             float jitter = hash21(gl_FragCoord.xy + fract(time) * 100.0);
 
@@ -158,10 +160,8 @@ void main() {
                 float dens = sampleCloudDensity(p, coverage, time, windSpeed);
 
                 if (dens > 0.0005) {
-                    // 2-tap directional sun shadow inside cloud slab
-                    float shadowDens = sampleCloudDensity(p + sunDir * 140.0, coverage, time, windSpeed)
-                                     + sampleCloudDensity(p + sunDir * 360.0, coverage, time, windSpeed) * 0.5;
-                    float sunAtten = exp(-shadowDens * 6.5);
+                    float shadowDens = sampleCloudDensity(p + sunDir * 220.0, coverage, time, windSpeed);
+                    float sunAtten = exp(-shadowDens * 8.0);
                     float powder = 1.0 - exp(-dens * dt * 0.025);
 
                     vec3 directCol = ubo.sunColor.rgb * sunIntensity * (0.45 + phase * 3.5) * sunAtten * mix(1.0, 0.38, stormDim);
@@ -169,11 +169,11 @@ void main() {
                     vec3 flashCol = vec3(0.75, 0.85, 1.0) * lightning * 6.0;
 
                     vec3 stepLight = (directCol + ambCol + flashCol) * mix(0.65, 1.25, powder);
-                    float stepTrans = exp(-dens * dt * 0.015);
+                    float stepTrans = exp(-dens * dt * 0.016);
                     cloudLight += transmittance * stepLight * (1.0 - stepTrans);
                     transmittance *= stepTrans;
 
-                    if (transmittance < 0.02) break;
+                    if (transmittance < 0.03) break;
                 }
             }
 

@@ -1,89 +1,72 @@
-
 # vulkan-terrain-engine
 
-Real-time procedural terrain rendering engine built with C++17 and Vulkan, featuring GPU compute generation, dynamic chunk LOD, atmospheric day-night cycles, and procedural foliage scatter.
---
-## Demo
-
-
-
-
-
-
-
-
-
-
-
-
+Real-time procedural terrain rendering engine built with C++17, an RHI supporting **native Apple Metal** and **Vulkan** (via `glslc` + `spirv-cross`), linear HDR PBR lighting, physical atmosphere LUTs, 4-cascade CSM shadows, volumetric clouds & god-rays, spectral clipmap water with screen-space reflections, dynamic weather, and toroidal zero-stall chunk streaming.
 
 <video
   src="https://github.com/user-attachments/assets/5cdfa1aa-619e-4c56-b038-13edf11fd92b"
   width="100%"
   controls></video>
 
-
-
-
 ---
 
 ## Features
 
-- **GPU Compute Generation**: Heights and surface normals are computed directly on the graphics card using multi-octave gradient noise, domain warping, and ridge synthesis.
-- **Dynamic Chunk LOD**: Infinite grid of terrain chunks updated around the camera with automatic distance-based mesh decimation (LOD 0 to LOD 3) to keep frame rates steady.
-- **Procedural Biomes**:
-  - **Alpine Mountains**: Jagged rocky peaks, high plateaus with snow cover, evergreen pine belts, and pebble riverbeds.
-  - **Rolling Hills**: Smooth pastoral ridges, lush meadows, and agricultural valleys.
-  - **Desert Canyons**: Multi-layered sandstone cliffs, stepped mesas, and eroded scrublands.
-  - **Tropical Islands**: Volcanic basalt peaks surrounded by coastal jungle canopies and sandy beaches.
-  - **Multi-Biome World**: Seamless macro continental blending connecting all environments into a single coherent map.
-- **Atmospheric Day-Night Cycle**:
-  - Continuous 24-hour celestial progression with smooth transitions between sunrise, noon, sunset, dusk, and deep night.
-  - Procedural starfield with twinkling stars and Milky Way dust band.
-  - Silvery directional moonlight and warm golden sunlight.
-  - Procedural volumetric cloud dome with realistic wind drift.
-- **Instanced 3D Foliage and Scatter**:
-  - Biome-specific models including conifer pine trees, deciduous oaks, tropical palms, saguaro cacti, boulders, and grass tufts.
-  - Placement rules based on elevation, slope, and water height with root sinking to prevent floating assets on steep hills.
-  - Real-time density controls.
-- **Physical Water Mechanics & Ray-Traced Optics**:
-  - Multi-octave Gerstner wave spectrum producing dynamic trochoidal crests, troughs, and lateral surface displacement.
-  - Analytical wave normal derivatives combined with procedural micro-faceting.
-  - Physically based Fresnel reflection and screen-space sky/sun ray reflection.
-  - Optical Beer-Lambert light absorption ($I = I_0 e^{-\sigma \cdot d}$) creating vibrant turquoise shallows and deep navy ocean trenches.
-  - Dynamic procedural shoreline foam and breaking wave crest foam.
-  - Animated sunlight caustics projected onto submerged terrain riverbeds and seabeds.
-- **Diagnostics and Controls**:
-  - On-screen diagnostics overlay showing real-time frame rates, coordinates, chunk counts, water wave parameters, and active settings.
-  - Visualization modes for LOD levels, normal maps, slope steepness, and wireframe mesh rendering.
+- **Dual-Backend RHI (`Metal` & `Vulkan`)**:
+  - Unified command list, buffer, texture, sampler, and pipeline interface.
+  - Native **Apple Metal** backend with runtime MSL 3.0 compilation and SPIRV-Cross reflection binding maps.
+  - **Vulkan** backend with dynamic descriptor pools and `vkCmd` multi-pass rendering.
+- **Zero-Stall Compute Terrain & CDLOD Streaming**:
+  - In-frame GPU compute chunk generation (`terrain.comp`) with toroidal chunk ring allocation, distance-sorted streaming budgets, frustum culling, and continuous CDLOD vertex morphing (`LOD 0..3`).
+- **9 Procedural Biomes (`1`–`9`)**:
+  - **Mountains (`1`)**: Alpine granite peaks, snow-capped ridges, and river valleys.
+  - **Rolling Hills (`2`)**: Pastoral emerald slopes, meadows, and carved streams.
+  - **Deep Canyons (`3`)**: Terraced red sandstone gorges, plateaus, and buttes.
+  - **Tropical Islands (`4`)**: Volcanic coastal peaks, sandy beaches, and palm groves.
+  - **Multi-Biome World (`5`)**: Continuous continental, moisture, and temperature blending across biomes.
+  - **Alpine Emerald Valley (`6`)**: Glacial U-shaped emerald valleys flanked by steep spires and snow summits.
+  - **Arctic Tundra & Fjords (`7`)**: Glacial fjord channels, permafrost/lichen lowlands, and frost-dusted pines.
+  - **Autumn Highlands (`8`)**: Misty highland lochs, heather/leaf-litter floors, and autumn gold/crimson foliage.
+  - **Karst Peaks & Bamboo (`9`)**: Vertical limestone karst towers, winding river plains, and tall bamboo clusters.
+- **HDR Lighting, Atmosphere, Shadows & Post-Processing**:
+  - Hillaire 2020 transmittance, multi-scattering, and sky-view atmosphere LUTs (`24h` smooth day/night transition, stars, sun/moon).
+  - 3D Perlin-Worley volumetric cloud raymarching, dynamic weather presets (Clear, Partly Cloudy, Overcast, Rain, Thunderstorm, Snow, Foggy), lightning flashes, and instanced rain/snow particles.
+  - `4096×4096` 4-cascade texel-snapped CSM shadow atlas, half-resolution GTAO + bilateral blur, and quarter-resolution volumetric god-rays.
+  - 8-layer `1024×1024` GPU-baked PBR material arrays with stochastic non-repeating UV tiling, triplanar steep cliffs, surface wetness, rain puddles, and dynamic snow accumulation.
+  - 5-level Call-of-Duty Karis HDR bloom, AgX / ACES / Reinhard tone mapping, and Contrast-Adaptive Sharpening (CAS).
+- **Physical Clipmap Water**:
+  - `192×192` concentric radial clipmap mesh driven by compute JONSWAP wave spectra (`water_spectrum.comp`) and interactive ripple ping-pong (`water_ripples.comp`).
+  - Depth-buffer Beer-Lambert refraction, seabed caustics, screen-space raymarched reflections (SSR), Fresnel specular glint, shoreline foam, and underwater distortion/absorption.
+- **Cached Instanced Foliage**:
+  - Layered pines, multi-lobe oaks, segmented palms, dual-arm cacti, granite/sandstone boulders, wild grass tufts, and bamboo clusters with procedural bark, foliage, rock grain shaders, and per-chunk CPU scatter caching.
 
 ---
 
-## Controls
+## Controls & CLI
 
+### CLI Options
+```bash
+./build/terrain                     # Interactive launch (Metal default on macOS, Vulkan elsewhere)
+./build/terrain --backend metal     # Force Apple Metal backend
+./build/terrain --backend vulkan    # Force Vulkan backend
+./build/terrain --smoke-test        # Render 5 frames cleanly and print GPU/CPU timings
+```
+
+### Keyboard & Mouse
 | Key | Description |
 | :--- | :--- |
 | **W, A, S, D** | Fly camera forward, left, backward, right |
 | **Shift** | Turbo speed boost |
-| **Space / E** | Fly upward |
-| **Ctrl / Q** | Fly downward |
-| **Tab / Esc** | Lock or release mouse cursor |
-| **T** | Pause or resume day-night cycle |
-| **[ / ]** | Scrub time backward or forward by 30 minutes |
-| **1 - 5** | Switch presets (1: Mountains, 2: Hills, 3: Canyons, 4: Islands, 5: Multi-Biome) |
-| **G** | Toggle physical water rendering |
-| **B / N** | Decrease or increase wave amplitude |
-| **O / P** | Lower or raise water elevation |
-| **E** | Toggle 3D foliage and scatter rendering |
-| **U / I** | Decrease or increase foliage density |
-| **Z / X** | Decrease or increase terrain height amplitude |
-| **C / V** | Decrease or increase terrain noise frequency |
-| **- / =** | Decrease or increase view distance |
-| **L** | Toggle dynamic LOD vs manual LOD lock |
-| **J / K** | Step through manual LOD levels when locked |
-| **M** | Cycle shading modes (Realistic, LOD Colors, Normals, Slope) |
-| **F** | Toggle wireframe rendering |
-| **H** | Toggle HUD overlay display |
+| **Space / Q** | Fly upward / downward |
+| **Tab / Esc** | Toggle mouse capture (unlock cursor for ImGui panel) / Exit |
+| **1 - 9** | Switch biome presets (Mountains, Hills, Canyons, Islands, Multi-Biome, Alpine Valley, Arctic Tundra, Autumn Highlands, Karst Peaks) |
+| **R** | Randomize world seed |
+| **T / [ / ]** | Pause/resume or scrub time of day (`30 min` steps) |
+| **G / B / N / O / P** | Toggle water, adjust wave amplitude, raise/lower water level |
+| **E / U / I** | Toggle foliage and adjust foliage density |
+| **Z / X / C / V** | Adjust terrain amplitude and noise frequency |
+| **- / =** | Adjust chunk view radius |
+| **L / J / K** | Toggle auto/manual LOD and step LOD level |
+| **M / F / H** | Cycle debug modes, toggle wireframe, toggle HUD/ImGui panel |
 
 ---
 
@@ -92,163 +75,66 @@ Real-time procedural terrain rendering engine built with C++17 and Vulkan, featu
 ```
 vulkan-terrain/
 ├── CMakeLists.txt
+├── scripts/
+│   └── gen_metal_map.py
 ├── include/
-│   ├── app/
-│   │   └── Application.hpp
-│   ├── camera/
-│   │   └── Camera.hpp
+│   ├── app/Application.hpp
+│   ├── camera/Camera.hpp
 │   ├── core/
-│   │   ├── EngineConstants.hpp
-│   │   ├── VulkanBuffer.hpp
-│   │   ├── VulkanContext.hpp
-│   │   ├── VulkanPipeline.hpp
-│   │   └── VulkanSwapchain.hpp
 │   ├── renderer/
-│   │   ├── FoliageRenderer.hpp
-│   │   ├── Renderer.hpp
-│   │   ├── SkyRenderer.hpp
-│   │   ├── UIOverlay.hpp
-│   │   └── WaterRenderer.hpp
+│   ├── rhi/
 │   └── terrain/
-│       ├── ChunkManager.hpp
-│       ├── ComputeTerrainGenerator.hpp
-│       ├── TerrainChunk.hpp
-│       └── TerrainTypes.hpp
 ├── shaders/
-│   ├── foliage.frag
-│   ├── foliage.vert
-│   ├── sky.frag
-│   ├── sky.vert
-│   ├── terrain.comp
-│   ├── terrain.frag
-│   ├── terrain.vert
-│   ├── ui.frag
-│   ├── ui.vert
-│   ├── water.frag
-│   └── water.vert
+│   ├── atmo_*.comp, cloud_noise_bake.comp, bloom_*.comp
+│   ├── gtao*.comp, material_bake.comp, volumetric_rays.comp
+│   ├── terrain.{comp,vert,frag}, shadow_terrain.vert
+│   ├── foliage.{vert,frag}, shadow_foliage.vert
+│   ├── sky.{vert,frag}, precipitation.{vert,frag}, postprocess.{vert,frag}
+│   └── water*.{comp,vert,frag}
 └── src/
     ├── app/
-    │   └── Application.cpp
     ├── camera/
-    │   └── Camera.cpp
     ├── core/
-    │   ├── VulkanBuffer.cpp
-    │   ├── VulkanContext.cpp
-    │   ├── VulkanPipeline.cpp
-    │   └── VulkanSwapchain.cpp
     ├── main.cpp
     ├── renderer/
-    │   ├── FoliageRenderer.cpp
-    │   ├── Renderer.cpp
-    │   ├── SkyRenderer.cpp
-    │   ├── UIOverlay.cpp
-    │   └── WaterRenderer.cpp
+    ├── rhi/{RHIFactory.cpp, metal/, vulkan/}
     └── terrain/
-        ├── ChunkManager.cpp
-        ├── ComputeTerrainGenerator.cpp
-        └── TerrainChunk.cpp
 ```
 
 ---
 
-## Prerequisites
+## Building & Running
 
-To build and run the engine, you will need:
-
-1. **C++17 Compiler**: GCC 9+, Clang 10+, or MSVC 2019+.
-2. **CMake**: Version 3.22 or higher.
-3. **Vulkan SDK**: LunarG Vulkan SDK (1.2 or higher) including the `glslc` shader compiler.
-4. **GLFW3**: Windowing and input handling library.
-5. **GLM**: Header-only mathematics library for graphics software.
-
----
-
-## Building and Running
+### Prerequisites
+1. **C++17 Compiler** (Clang 12+, GCC 10+, or MSVC 2019+) & Objective-C++ on macOS
+2. **CMake 3.22+** & **Python 3** (for SPIRV-Cross reflection binding maps on macOS)
+3. **Vulkan SDK / `glslc`** (and `spirv-cross` on macOS for Metal MSL cross-compilation)
+4. **GLFW3**, **GLM**, and Dear ImGui in `vendor/imgui`
 
 ### macOS (Apple Silicon & Intel)
-
-Install required packages via Homebrew:
 ```bash
-brew install cmake glfw glm
-# Install LunarG Vulkan SDK from https://vulkan.lunarg.com/
+brew install cmake ninja glfw glm shaderc spirv-cross
+# Or install LunarG Vulkan SDK (includes glslc, spirv-cross, and MoltenVK)
+
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j8
+./build/terrain --backend metal
 ```
 
-Make sure your Vulkan SDK environment is active:
+### Linux (Ubuntu / Debian / Arch)
 ```bash
-source ~/VulkanSDK/*/setup-env.sh
-```
+# Ubuntu / Debian:
+sudo apt update && sudo apt install build-essential cmake ninja-build libvulkan-dev libglfw3-dev libglm-dev glslc
 
-Configure and build:
-```bash
-cmake -B build -S .
-cmake --build build
-```
-
-Run the application:
-```bash
-./build/terrain
-```
-
----
-
-### Linux (Ubuntu / Debian / Fedora / Arch)
-
-Install dependencies on Ubuntu/Debian:
-```bash
-sudo apt update
-sudo apt install build-essential cmake libvulkan-dev vulkan-tools libglfw3-dev libglm-dev glslc
-```
-
-On Fedora:
-```bash
-sudo dnf install gcc-c++ cmake vulkan-loader-devel glfw-devel glm-devel glslc
-```
-
-On Arch Linux:
-```bash
-sudo pacman -S base-devel cmake vulkan-devel glfw-x11 glm shaderc
-```
-
-Build and run:
-```bash
-cmake -B build -S .
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-./build/terrain
+./build/terrain --backend vulkan
 ```
 
----
-
-### Windows (Visual Studio / MSVC)
-
-1. Download and install the [Vulkan SDK](https://vulkan.lunarg.com/). Make sure the SDK bin folder containing `glslc.exe` is added to your system `PATH`.
-2. Install [GLFW](https://www.glfw.org/) and [GLM](https://github.com/g-truc/glm) using [vcpkg](https://vcpkg.io/) or CMake package managers:
-   ```cmd
-   vcpkg install glfw3:x64-windows glm:x64-windows
-   ```
-3. Generate project files and build using CMake:
-   ```cmd
-   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
-   cmake --build build --config Release
-   ```
-4. Run the executable:
-   ```cmd
-   .\build\Release\terrain.exe
-   ```
-
----
-
-## Extending the Engine
-
-### Adding a New Biome
-
-1. Open `shaders/terrain.comp` and add your height calculation in the compute pipeline. You can use standard fractal Brownian motion (fbm) or custom domain warps.
-2. Open `shaders/terrain.frag` and add a new color calculation function that defines the surface textures, slope rock exposures, and elevation bands.
-3. Open `include/terrain/TerrainTypes.hpp` and add your new preset to `TerrainPreset` enum.
-4. Add the corresponding CPU height formula in `src/renderer/FoliageRenderer.cpp` if you want scatter objects to automatically align with your new terrain surface.
-
-### Adding New Foliage and Scatter Models
-
-1. Open `src/renderer/FoliageRenderer.cpp` and increase `NUM_MODELS`.
-2. In `FoliageRenderer::createModels()`, define your custom vertex and index data (or procedural primitives like cylinders, cones, and polyhedra).
-3. In `FoliageRenderer::updateInstances()`, write placement rules based on height, slope, moisture, and random hashing to determine where instances spawn.
-
+### Windows (MSVC + Vulkan SDK + vcpkg)
+```cmd
+vcpkg install glfw3:x64-windows glm:x64-windows
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+.\build\Release\terrain.exe
+```

@@ -12,6 +12,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 viewProj;
     mat4 view;
     mat4 proj;
+    mat4 invViewProj;
+    mat4 invProj;
     vec4 cameraPos;
     vec4 sunDir;
     vec4 sunColor;

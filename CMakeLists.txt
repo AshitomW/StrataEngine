@@ -3,6 +3,10 @@ project(vulkan_terrain LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 option(ENABLE_VULKAN "Enable Vulkan RHI backend" ON)
 if(APPLE)
     option(ENABLE_METAL "Enable native Apple Metal RHI backend" ON)

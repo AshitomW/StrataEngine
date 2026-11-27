@@ -71,6 +71,7 @@ ShadowRenderer::ShadowRenderer(rhi::RHIDevice& device) {
 }
 
 void ShadowRenderer::updateCascades(const Camera& camera, const glm::vec3& lightDir) {
+    m_cameraPos = camera.getPosition();
     glm::vec3 dir = glm::normalize(lightDir);
     if (dir.y < 0.05f) {
         dir.y = 0.05f;
@@ -167,7 +168,7 @@ void ShadowRenderer::renderShadows(
 
         cmd.bindGraphicsPipeline(*m_terrainShadowPipeline);
         cmd.bindUniformBuffer(0, globalUBO);
-        chunkManager.recordShadowCommands(cmd, c, config);
+        chunkManager.recordShadowCommands(cmd, c, m_cameraPos, m_cascadeSplits[c], config);
 
         if (config.showFoliage && !config.wireframe && c < 3) {
             cmd.bindGraphicsPipeline(*m_foliageShadowPipeline);

@@ -13,6 +13,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 viewProj;
     mat4 view;
     mat4 proj;
+    mat4 invViewProj;
+    mat4 invProj;
     vec4 cameraPos;
     vec4 sunDir;
     vec4 sunColor;
@@ -322,6 +324,8 @@ void main() {
     float surfaceRoughness = 0.85;
     float bakedAO = 1.0;
 
+    float camDist = length(ubo.cameraPos.xyz - inWorldPos);
+
     if (ubo.shadowParams.w > 0.5) {
         vec2 uv = inWorldPos.xz * 0.14;
         float weights[8] = float[8](w0, w1, w2, w3, w4, w5, w6, w7);
@@ -330,8 +334,11 @@ void main() {
         float maxH = -1.0;
 
         for (int i = 0; i < 8; ++i) {
-            if (weights[i] > 0.01) {
-                if (slope > 0.35 && (i == 1 || i == 4 || i == 5)) {
+            if (weights[i] > 0.04) {
+                if (camDist > 420.0) {
+                    albedos[i] = texture(uMaterialAlbedo, vec3(uv * 0.65, float(i)));
+                    norms[i] = texture(uMaterialNormalORM, vec3(uv * 0.65, float(i)));
+                } else if (camDist < 220.0 && slope > 0.35 && (i == 1 || i == 4 || i == 5)) {
                     sampleTriplanarLayer(float(i), inWorldPos, N, albedos[i], norms[i]);
                 } else {
                     sampleStochasticLayer(float(i), uv, albedos[i], norms[i]);
@@ -353,7 +360,7 @@ void main() {
         float accAO = 0.0;
 
         for (int i = 0; i < 8; ++i) {
-            if (weights[i] > 0.01) {
+            if (weights[i] > 0.04) {
                 float hw = max(albedos[i].a + weights[i] - hThreshold, 0.0);
                 hw = hw * weights[i];
                 sumW += hw;
@@ -504,8 +511,8 @@ void main() {
 
     vec3 litColor = ambientPBR + directPBR;
 
-    // Atmospheric Distance Fog & Valley Mist (modulated by Weather)
-    float dist = length(ubo.cameraPos.xyz - inWorldPos);
+    // Atmospheric Distance Fog & Valley Mist
+    float dist = camDist;
     float maxDist = max(ubo.biomeParams.w, 150.0);
 
     float distFactor = clamp((dist / maxDist) * fogMult, 0.0, 1.0);

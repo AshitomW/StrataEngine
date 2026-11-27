@@ -170,7 +170,6 @@ struct TerrainConfig {
     float waveChoppiness = 0.85f;
     bool interactiveRipples = true;
 
-    // Milestone 2: HDR, Physical Atmosphere & Post-Processing
     float exposure = 1.0f;
     bool bloomEnabled = true;
     float bloomIntensity = 0.32f;
@@ -181,7 +180,6 @@ struct TerrainConfig {
     float sunIntensity = 2.6f;
     float iblStrength = 1.0f;
 
-    // Milestone 3: Shadows, GTAO & Baked PBR Textures
     bool shadowsEnabled = true;
     float shadowStrength = 1.0f;
     float shadowBias = 0.0012f;
@@ -189,7 +187,6 @@ struct TerrainConfig {
     float gtaoStrength = 0.75f;
     bool usePBRTextures = true;
 
-    // Milestone 5: Dynamic Weather, Volumetric Clouds & Procedural Structures
     int weatherType = 1; // 0: Clear, 1: PartlyCloudy, 2: Overcast, 3: Rain, 4: Thunderstorm, 5: Snow, 6: Foggy
     bool weatherAutoTransition = true;
     float cloudCoverage = 0.42f;
@@ -235,6 +232,8 @@ struct GlobalUBO {
     glm::mat4 viewProj;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::mat4 invViewProj;
+    glm::mat4 invProj;
     glm::vec4 cameraPos;
     glm::vec4 sunDir;
     glm::vec4 sunColor;

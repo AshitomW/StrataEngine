@@ -185,9 +185,16 @@ void ChunkManager::recordRenderCommands(rhi::RHICommandList& cmd, const Frustum&
     }
 }
 
-void ChunkManager::recordShadowCommands(rhi::RHICommandList& cmd, uint32_t cascadeIndex, const TerrainConfig& config) {
+void ChunkManager::recordShadowCommands(
+    rhi::RHICommandList& cmd,
+    uint32_t cascadeIndex,
+    const glm::vec3& cameraPos,
+    float cascadeSplitDist,
+    const TerrainConfig& config
+) {
     (void)config;
     uint32_t minLod = (cascadeIndex <= 1) ? 0u : (cascadeIndex == 2 ? 1u : 2u);
+    float maxChunkDist = cascadeSplitDist + CHUNK_SIZE * 1.15f;
 
     for (uint32_t lod = minLod; lod < NUM_LOD_LEVELS; ++lod) {
         cmd.bindIndexBuffer(*m_lodIndexBuffers[lod]);
@@ -197,6 +204,7 @@ void ChunkManager::recordShadowCommands(rhi::RHICommandList& cmd, uint32_t casca
         for (const auto& chunk : m_chunks) {
             uint32_t effectiveLod = std::max(chunk.getLOD(), minLod);
             if (effectiveLod != lod || chunk.needsRegeneration()) continue;
+            if (chunk.getDistanceTo(cameraPos) > maxChunkDist) continue;
 
             glm::vec2 wp = chunk.getWorldPos();
             cmd.bindStorageBuffer(0, chunk.getSSBOBuffer());

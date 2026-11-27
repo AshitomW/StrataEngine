@@ -44,4 +44,5 @@ private:
 
     std::array<glm::mat4, CASCADE_COUNT> m_lightSpaceMatrices{};
     glm::vec4 m_cascadeSplits{32.0f, 105.0f, 280.0f, 720.0f};
+    glm::vec3 m_cameraPos{0.0f};
 };

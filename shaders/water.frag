@@ -12,6 +12,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 viewProj;
     mat4 view;
     mat4 proj;
+    mat4 invViewProj;
+    mat4 invProj;
     vec4 cameraPos;
     vec4 sunDir;
     vec4 sunColor;
@@ -55,7 +57,7 @@ vec2 dirToSkyViewUV(vec3 dir) {
 
 vec3 reconstructWorldPos(vec2 screenUV, float depth) {
     vec2 ndc = screenUV * 2.0 - 1.0;
-    vec4 worldPos = inverse(ubo.viewProj) * vec4(ndc, depth, 1.0);
+    vec4 worldPos = ubo.invViewProj * vec4(ndc, depth, 1.0);
     return worldPos.xyz / max(worldPos.w, 1e-5);
 }
 
@@ -90,8 +92,8 @@ vec3 traceSSR(vec3 worldPos, vec3 reflDir, out float hitConfidence) {
         return vec3(0.0);
     }
 
-    const int MAX_STEPS = 24;
-    const int REFINE_STEPS = 4;
+    const int MAX_STEPS = 16;
+    const int REFINE_STEPS = 3;
     float maxDist = 240.0;
 
     vec3 rayStart = worldPos + vec3(0.0, 0.06, 0.0);

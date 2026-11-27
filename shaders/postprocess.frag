@@ -7,6 +7,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 viewProj;
     mat4 view;
     mat4 proj;
+    mat4 invViewProj;
+    mat4 invProj;
     vec4 cameraPos;
     vec4 sunDir;
     vec4 sunColor;
@@ -99,7 +101,7 @@ void main() {
 
     if (underwater) {
         vec2 ndc = sampleUV * 2.0 - 1.0;
-        vec4 viewPos = inverse(ubo.proj) * vec4(ndc, depth, 1.0);
+        vec4 viewPos = ubo.invProj * vec4(ndc, depth, 1.0);
         float viewDist = (depth >= 0.9999) ? 160.0 : length(viewPos.xyz / max(viewPos.w, 1e-5));
         vec3 uwSigma = vec3(0.18, 0.055, 0.028);
         vec3 uwTrans = exp(-viewDist * uwSigma);
