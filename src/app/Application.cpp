@@ -236,7 +236,7 @@ void Application::run() {
         glfwPollEvents();
 
         m_camera->update(deltaTime, m_window);
-        m_chunkManager->update(*m_device, m_camera->getPosition(), m_config);
+        m_chunkManager->updateCoordsAndLOD(m_camera->getPosition(), m_config);
 
         m_hudInfo.fps = m_currentFPS;
         m_hudInfo.activeChunks = m_chunkManager->getChunkCount();
@@ -265,7 +265,7 @@ int Application::runSmokeTest(int numFrames) {
         auto t0 = clock::now();
 
         m_config.advanceTime(0.016f);
-        m_chunkManager->update(*m_device, m_camera->getPosition(), m_config);
+        m_chunkManager->updateCoordsAndLOD(m_camera->getPosition(), m_config);
         m_hudInfo.fps = 60.0f;
         m_hudInfo.activeChunks = m_chunkManager->getChunkCount();
         m_hudInfo.mouseCaptured = false;

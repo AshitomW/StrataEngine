@@ -10,6 +10,7 @@
 #include "renderer/ShadowRenderer.hpp"
 #include "renderer/SkyRenderer.hpp"
 #include "renderer/StructureRenderer.hpp"
+#include "renderer/VolumetricRenderer.hpp"
 #include "renderer/WaterRenderer.hpp"
 #include "renderer/WeatherSystem.hpp"
 #include "renderer/FrameContext.hpp"
@@ -93,7 +94,9 @@ private:
     std::unique_ptr<PrecipitationRenderer> m_precipitationRenderer;
     std::unique_ptr<WeatherSystem> m_weatherSystem;
     std::unique_ptr<SkyRenderer> m_skyRenderer;
+    std::unique_ptr<VolumetricRenderer> m_volumetricRenderer;
     std::unique_ptr<WaterRenderer> m_waterRenderer;
+    GlobalUBO m_currentUBO{};
 
     std::array<std::unique_ptr<rhi::RHIBuffer>, MAX_FRAMES_IN_FLIGHT> m_uboBuffers;
     std::unique_ptr<rhi::RHIPipeline> m_solidPipeline;

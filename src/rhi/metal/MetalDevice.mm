@@ -249,6 +249,7 @@ public:
     int32_t compUboSlot = -1;
     int32_t compSsboSlot = -1;
     int32_t compPcSlot = -1;
+    uint32_t numStorageBuffers = 0;
 };
 
 class MetalRHICommandList final : public RHICommandList {
@@ -392,8 +393,9 @@ public:
         const auto& mtlSamp = static_cast<const MetalRHISampler&>(sampler);
         if (m_currentPipeline && m_currentPipeline->isCompute) {
             if (m_computeEncoder) {
-                [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
-                [m_computeEncoder setSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
+                uint32_t texSlot = (slot >= m_currentPipeline->numStorageBuffers) ? (slot - m_currentPipeline->numStorageBuffers) : slot;
+                [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(texSlot)];
+                [m_computeEncoder setSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(texSlot)];
             }
         } else if (m_renderEncoder) {
             [m_renderEncoder setVertexTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
@@ -406,7 +408,10 @@ public:
     void bindStorageTexture(uint32_t slot, const RHITexture& texture) override {
         if (!m_computeEncoder) return;
         const auto& mtlTex = static_cast<const MetalRHITexture&>(texture);
-        [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
+        uint32_t texSlot = (m_currentPipeline && slot >= m_currentPipeline->numStorageBuffers)
+            ? (slot - m_currentPipeline->numStorageBuffers)
+            : slot;
+        [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(texSlot)];
     }
 
     void pushConstants(ShaderStage stages, const void* data, size_t size) override {
@@ -786,6 +791,7 @@ std::unique_ptr<RHIPipeline> MetalDevice::createComputePipeline(const ComputePip
     pipe->localSizeX = desc.localSizeX;
     pipe->localSizeY = desc.localSizeY;
     pipe->localSizeZ = desc.localSizeZ;
+    pipe->numStorageBuffers = desc.numStorageBuffers;
 
     id<MTLLibrary> compLib = m_impl->getOrCompileLibrary(desc.computeShader);
     id<MTLFunction> func = [compLib newFunctionWithName:@"main0"];
@@ -814,7 +820,7 @@ std::unique_ptr<RHIPipeline> MetalDevice::createComputePipeline(const ComputePip
                 pipe->compUboSlot = static_cast<int32_t>(b.index);
             } else if ([b.name isEqualToString:@"pc"]) {
                 pipe->compPcSlot = static_cast<int32_t>(b.index);
-            } else if ([b.name isEqualToString:@"terrainBuffer"] || [b.name isEqualToString:@"terrainSSBO"]) {
+            } else {
                 pipe->compSsboSlot = static_cast<int32_t>(b.index);
             }
         }

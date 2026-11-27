@@ -18,6 +18,7 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 shadowParams;
     vec4 weatherParams;
     vec4 weatherParams2;
+    vec4 tracingParams;
 } ubo;
 
 layout(std430, set = 1, binding = 0) readonly buffer TerrainSSBO {

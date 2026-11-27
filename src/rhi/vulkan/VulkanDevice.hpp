@@ -141,6 +141,7 @@ private:
     };
 
     static constexpr size_t MAX_BOUND_SLOTS = 8;
+    std::array<const VulkanRHIBuffer*, MAX_BOUND_SLOTS> m_boundStorageBuffers{};
     std::array<BoundTexture, MAX_BOUND_SLOTS> m_boundTextures{};
     std::array<BoundStorageImage, MAX_BOUND_SLOTS> m_boundStorageImages{};
     bool m_descriptorsDirty = false;

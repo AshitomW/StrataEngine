@@ -25,6 +25,7 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 shadowParams;
     vec4 weatherParams;
     vec4 weatherParams2;
+    vec4 tracingParams;
 } ubo;
 
 layout(location = 0) out vec3 outWorldPos;

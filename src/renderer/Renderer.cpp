@@ -38,6 +38,7 @@ Renderer::Renderer(rhi::RHIDevice& device, GLFWwindow* window)
     m_precipitationRenderer = std::make_unique<PrecipitationRenderer>(device);
     m_weatherSystem = std::make_unique<WeatherSystem>();
     m_skyRenderer = std::make_unique<SkyRenderer>(device);
+    m_volumetricRenderer = std::make_unique<VolumetricRenderer>(device, device.getSwapchainWidth(), device.getSwapchainHeight());
     m_waterRenderer = std::make_unique<WaterRenderer>(device);
 
     rhi::TextureDesc fallbackDesc{};
@@ -132,7 +133,7 @@ void Renderer::createPipelines() {
     ppDesc.hasDepth = false;
     ppDesc.usesUniformBuffer = true;
     ppDesc.usesStorageBuffer = false;
-    ppDesc.numSampledTextures = 4; // HdrColor, Bloom, AO, SceneDepth
+    ppDesc.numSampledTextures = 5; // HdrColor, Bloom, AO, SceneDepth, GodRays
     m_postProcessPipeline = m_device.createGraphicsPipeline(ppDesc);
 }
 
@@ -196,6 +197,9 @@ void Renderer::createScreenResources(uint32_t width, uint32_t height) {
     });
 
     m_gtaoRenderer->resize(m_device, width, height);
+    if (m_volumetricRenderer) {
+        m_volumetricRenderer->resize(width, height);
+    }
 }
 
 float Renderer::getAspectRatio() const {
@@ -251,7 +255,14 @@ void Renderer::updateUBO(uint32_t frameIndex, const Camera& camera, const Terrai
         config.lightningFlash,
         config.precipitationType
     );
+    ubo.tracingParams = glm::vec4(
+        config.ssrEnabled ? 1.0f : 0.0f,
+        config.godRaysEnabled ? config.godRaysIntensity : 0.0f,
+        config.cdlodMorph ? 1.0f : 0.0f,
+        config.sharpenEnabled ? 1.0f : 0.0f
+    );
 
+    m_currentUBO = ubo;
     m_uboBuffers[frameIndex]->copyFromHost(&ubo, sizeof(GlobalUBO));
 }
 
@@ -458,6 +469,17 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
             ImGui::SliderFloat("Structure Density", &config.structureDensity, 0.0f, 2.5f, "%.2f");
         }
 
+        if (ImGui::CollapsingHeader("Tracing, Volumetrics & Optimization", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Screen-Space Water Reflections (SSR)", &config.ssrEnabled);
+            ImGui::Checkbox("Volumetric God-Rays", &config.godRaysEnabled);
+            if (config.godRaysEnabled) {
+                ImGui::SliderFloat("God-Rays Intensity", &config.godRaysIntensity, 0.0f, 1.5f, "%.2f");
+            }
+            ImGui::Checkbox("CDLOD Vertex Morphing", &config.cdlodMorph);
+            ImGui::Checkbox("Contrast-Adaptive Sharpening", &config.sharpenEnabled);
+            ImGui::SliderInt("Chunk Stream Budget / Frame", &config.chunkBudgetPerFrame, 1, 32);
+        }
+
         if (needsRegen) {
             chunkManager.regenerateAll(m_device, config);
         }
@@ -518,6 +540,9 @@ bool Renderer::renderFrame(
     drawImGui(camera, chunkManager, config, hudInfo);
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
+
+    // 0. Zero-Stall In-Frame Compute Chunk Streaming
+    chunkManager.recordDirtyChunkCompute(*cmd, config, static_cast<uint32_t>(std::max(1, config.chunkBudgetPerFrame)));
 
     // 1. Physical Sky-View LUT & GPU Water Simulation
     m_atmosphereRenderer->updateSkyView(
@@ -624,11 +649,12 @@ bool Renderer::renderFrame(
         cmd->endRenderPass();
     }
 
-    // 4. Barriers + Half-Res GTAO + Bloom Pyramid
+    // 4. Barriers + Half-Res GTAO + Quarter-Res Volumetric God-Rays + Bloom Pyramid
     cmd->textureBarrier(*m_hdrColor, rhi::TextureLayout::ColorAttachment, rhi::TextureLayout::ShaderReadOnly);
     cmd->textureBarrier(*m_sceneDepth, rhi::TextureLayout::DepthAttachment, rhi::TextureLayout::ShaderReadOnly);
 
     m_gtaoRenderer->compute(*cmd, *m_sceneDepth, camera, frameIndex, config);
+    m_volumetricRenderer->compute(*cmd, *m_sceneDepth, m_shadowRenderer->getShadowAtlas(), m_currentUBO, config, frameIndex);
     runBloomPasses(*cmd, config);
 
     // 5. Final Swapchain Pass: AgX/ACES + Bloom + GTAO + ImGui
@@ -654,6 +680,10 @@ bool Renderer::renderFrame(
         : *m_whiteFallbackTex;
     cmd->bindTexture(2, aoSrc, *m_linearSampler);
     cmd->bindTexture(3, *m_sceneDepth, *m_linearSampler);
+    const rhi::RHITexture& godRaySrc = config.godRaysEnabled
+        ? m_volumetricRenderer->getGodRaysTexture()
+        : *m_blackFallbackTex;
+    cmd->bindTexture(4, godRaySrc, m_volumetricRenderer->getLinearSampler());
     cmd->draw(3, 1, 0);
 
     m_device.renderImGui(*cmd);

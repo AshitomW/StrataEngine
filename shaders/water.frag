@@ -26,6 +26,7 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 shadowParams;
     vec4 weatherParams;
     vec4 weatherParams2;
+    vec4 tracingParams;
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uWaveDispFoam;
@@ -81,6 +82,79 @@ float sampleWaterShadow(vec3 worldPos, float viewDepth) {
     float shadow = ((proj.z - bias) <= d) ? 1.0 : 0.0;
     float distFade = 1.0 - smoothstep(ubo.cascadeSplits.w * 0.80, ubo.cascadeSplits.w, viewDepth);
     return mix(1.0, shadow, strength * distFade);
+}
+
+vec3 traceSSR(vec3 worldPos, vec3 reflDir, out float hitConfidence) {
+    hitConfidence = 0.0;
+    if (ubo.tracingParams.x < 0.5 || reflDir.y < -0.35) {
+        return vec3(0.0);
+    }
+
+    const int MAX_STEPS = 24;
+    const int REFINE_STEPS = 4;
+    float maxDist = 240.0;
+
+    vec3 rayStart = worldPos + vec3(0.0, 0.06, 0.0);
+    float prevT = 0.0;
+    float hitT = -1.0;
+    vec2 hitUV = vec2(0.0);
+
+    for (int i = 1; i <= MAX_STEPS; ++i) {
+        float frac = float(i) / float(MAX_STEPS);
+        float t = 1.5 + maxDist * (frac * frac);
+        vec3 p = rayStart + reflDir * t;
+
+        vec4 clip = ubo.viewProj * vec4(p, 1.0);
+        if (clip.w <= 0.001) break;
+        vec3 ndc = clip.xyz / clip.w;
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        if (uv.x < 0.002 || uv.x > 0.998 || uv.y < 0.002 || uv.y > 0.998) break;
+        if (ndc.z < 0.0 || ndc.z >= 1.0) break;
+
+        float sceneD = texture(uOpaqueDepth, uv).r;
+        if (sceneD < 0.9999) {
+            vec3 sceneP = reconstructWorldPos(uv, sceneD);
+            float rayCamDist = length(p - ubo.cameraPos.xyz);
+            float sceneCamDist = length(sceneP - ubo.cameraPos.xyz);
+            float thickness = clamp(4.0 + rayCamDist * 0.035, 3.0, 26.0);
+            if (rayCamDist > sceneCamDist + 0.08 && (rayCamDist - sceneCamDist) < thickness) {
+                hitT = t;
+                hitUV = uv;
+                break;
+            }
+        }
+        prevT = t;
+    }
+
+    if (hitT < 0.0) {
+        return vec3(0.0);
+    }
+
+    float lo = prevT;
+    float hi = hitT;
+    for (int j = 0; j < REFINE_STEPS; ++j) {
+        float mid = 0.5 * (lo + hi);
+        vec3 p = rayStart + reflDir * mid;
+        vec4 clip = ubo.viewProj * vec4(p, 1.0);
+        if (clip.w <= 0.001) break;
+        vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+        if (uv.x < 0.002 || uv.x > 0.998 || uv.y < 0.002 || uv.y > 0.998) break;
+        float sceneD = texture(uOpaqueDepth, uv).r;
+        vec3 sceneP = reconstructWorldPos(uv, sceneD);
+        float rayCamDist = length(p - ubo.cameraPos.xyz);
+        float sceneCamDist = length(sceneP - ubo.cameraPos.xyz);
+        if (sceneD < 0.9999 && rayCamDist > sceneCamDist + 0.05) {
+            hi = mid;
+            hitUV = uv;
+        } else {
+            lo = mid;
+        }
+    }
+
+    vec2 edge = smoothstep(vec2(0.0), vec2(0.08), hitUV) * (1.0 - smoothstep(vec2(0.92), vec2(1.0), hitUV));
+    float distFade = 1.0 - smoothstep(maxDist * 0.65, maxDist, hi);
+    hitConfidence = clamp(edge.x * edge.y * distFade, 0.0, 1.0);
+    return texture(uOpaqueColor, hitUV).rgb;
 }
 
 void main() {
@@ -139,14 +213,17 @@ void main() {
     float R0 = 0.0204;
     float fresnel = clamp(R0 + (1.0 - R0) * pow(1.0 - NdotV, 5.0), 0.03, 0.96);
 
-    // Physical Sky-View LUT reflection + Sun specular glint
+    // Physical Sky-View LUT + Screen-Space Raymarched Reflection + Sun glint
     float sunIntensity = ubo.atmosphereParams.z;
     vec3 R = reflect(-V, faceN);
-    vec3 reflDir = vec3(R.x, max(R.y, 0.01), R.z);
+    vec3 reflDir = normalize(vec3(R.x, max(R.y, 0.01), R.z));
     vec3 skyRefl = texture(uSkyViewLUT, dirToSkyViewUV(reflDir)).rgb;
+    float ssrConf = 0.0;
+    vec3 ssrCol = traceSSR(inWorldPos, reflDir, ssrConf);
+    vec3 envRefl = mix(skyRefl, ssrCol, ssrConf);
     float sunReflDot = max(dot(R, L), 0.0);
     float sunGlint = pow(sunReflDot, 380.0) * 8.0 + pow(sunReflDot, 42.0) * 0.55;
-    vec3 reflectionColor = skyRefl + ubo.sunColor.rgb * sunGlint * sunIntensity * 0.75;
+    vec3 reflectionColor = envRefl + ubo.sunColor.rgb * sunGlint * sunIntensity * 0.75;
 
     // Shadows & illumination
     float viewDepth = max(-(ubo.view * vec4(inWorldPos, 1.0)).z, 0.0);

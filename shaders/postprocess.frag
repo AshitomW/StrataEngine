@@ -21,12 +21,14 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 shadowParams;     // x: shadowStrength, y: shadowBias, z: gtaoStrength, w: enablePBRTextures
     vec4 weatherParams;
     vec4 weatherParams2;
+    vec4 tracingParams;
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uHdrColor;
 layout(set = 2, binding = 1) uniform sampler2D uBloomTex;
 layout(set = 2, binding = 2) uniform sampler2D uAoTex;
 layout(set = 2, binding = 3) uniform sampler2D uSceneDepth;
+layout(set = 2, binding = 4) uniform sampler2D uGodRaysTex;
 
 vec3 agxDefaultContrastApprox(vec3 x) {
     vec3 x2 = x * x;
@@ -91,8 +93,9 @@ void main() {
     vec3 bloom = texture(uBloomTex, sampleUV).rgb;
     float depth = texture(uSceneDepth, sampleUV).r;
     float ao = (depth < 0.9999) ? mix(1.0, texture(uAoTex, sampleUV).r, clamp(ubo.shadowParams.z, 0.0, 1.0)) : 1.0;
+    vec3 godRays = texture(uGodRaysTex, sampleUV).rgb * max(ubo.tracingParams.y, 0.0);
 
-    hdr *= ao;
+    hdr = hdr * ao + godRays;
 
     if (underwater) {
         vec2 ndc = sampleUV * 2.0 - 1.0;
@@ -109,6 +112,23 @@ void main() {
     int toneMapper = int(ubo.postParams.w + 0.5);
 
     vec3 color = (hdr + bloom * bloomIntensity) * exposure;
+
+    // Optional 5-tap Contrast-Adaptive Sharpening (CAS)
+    if (ubo.tracingParams.w > 0.5 && depth < 0.9999 && !underwater) {
+        vec2 texel = 1.0 / vec2(textureSize(uHdrColor, 0));
+        vec3 n = texture(uHdrColor, sampleUV + vec2(0.0, texel.y)).rgb * exposure;
+        vec3 s = texture(uHdrColor, sampleUV - vec2(0.0, texel.y)).rgb * exposure;
+        vec3 e = texture(uHdrColor, sampleUV + vec2(texel.x, 0.0)).rgb * exposure;
+        vec3 w = texture(uHdrColor, sampleUV - vec2(texel.x, 0.0)).rgb * exposure;
+        const vec3 lumW = vec3(0.299, 0.587, 0.114);
+        float lC = dot(color, lumW);
+        float lMin = min(lC, min(min(dot(n, lumW), dot(s, lumW)), min(dot(e, lumW), dot(w, lumW))));
+        float lMax = max(lC, max(max(dot(n, lumW), dot(s, lumW)), max(dot(e, lumW), dot(w, lumW))));
+        float amp = clamp(min(lMin, 2.0 - lMax) / max(lMax, 1e-4), 0.0, 1.0);
+        float sharpW = -0.18 * sqrt(amp);
+        vec3 casColor = (color + (n + s + e + w) * sharpW) / max(1.0 + 4.0 * sharpW, 1e-4);
+        color = clamp(casColor, min(color, min(min(n, s), min(e, w))), max(color, max(max(n, s), max(e, w))));
+    }
 
     // Subtle edge vignette
     vec2 centered = inUV * 2.0 - 1.0;

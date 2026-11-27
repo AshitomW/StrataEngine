@@ -18,6 +18,8 @@ public:
     ChunkManager& operator=(const ChunkManager&) = delete;
 
     void update(rhi::RHIDevice& device, const glm::vec3& cameraPos, const TerrainConfig& config);
+    void updateCoordsAndLOD(const glm::vec3& cameraPos, const TerrainConfig& config);
+    void recordDirtyChunkCompute(rhi::RHICommandList& cmd, const TerrainConfig& config, uint32_t maxChunksPerFrame);
     void regenerateAll(rhi::RHIDevice& device, const TerrainConfig& config);
     void setRadius(rhi::RHIDevice& device, int newRadius, const TerrainConfig& config);
 

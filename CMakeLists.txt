@@ -63,6 +63,7 @@ set(SHADERS
     terrain.comp
     terrain.vert
     terrain.frag
+    volumetric_rays.comp
     foliage.vert
     foliage.frag
     sky.vert
@@ -145,6 +146,7 @@ set(ENGINE_SOURCES
     src/renderer/ShadowRenderer.cpp
     src/renderer/SkyRenderer.cpp
     src/renderer/StructureRenderer.cpp
+    src/renderer/VolumetricRenderer.cpp
     src/renderer/WaterRenderer.cpp
     src/renderer/WeatherSystem.cpp
     src/terrain/ChunkManager.cpp

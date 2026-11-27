@@ -187,6 +187,13 @@ struct TerrainConfig {
     bool showStructures = true;
     float structureDensity = 1.0f;
 
+    bool ssrEnabled = true;
+    bool godRaysEnabled = true;
+    float godRaysIntensity = 0.55f;
+    bool cdlodMorph = true;
+    bool sharpenEnabled = true;
+    int chunkBudgetPerFrame = 8;
+
     void toggleWater() {
         showWater = !showWater;
     }
@@ -226,6 +233,7 @@ struct GlobalUBO {
     glm::vec4 shadowParams;
     glm::vec4 weatherParams;
     glm::vec4 weatherParams2;
+    glm::vec4 tracingParams; // x: ssrEnabled, y: godRaysIntensity, z: cdlodMorph, w: sharpenEnabled
 };
 
 struct ShadowPushConstants {

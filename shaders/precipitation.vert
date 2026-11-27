@@ -22,6 +22,7 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 shadowParams;
     vec4 weatherParams;
     vec4 weatherParams2;
+    vec4 tracingParams;
 } ubo;
 
 vec3 hash31(uint n) {

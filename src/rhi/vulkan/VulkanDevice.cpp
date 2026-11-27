@@ -383,6 +383,7 @@ void VulkanRHICommandList::bindGraphicsPipeline(const RHIPipeline& pipeline) {
 void VulkanRHICommandList::bindComputePipeline(const RHIPipeline& pipeline) {
     const auto& vkPipe = static_cast<const VulkanRHIPipeline&>(pipeline);
     m_currentPipeline = &vkPipe;
+    m_boundStorageBuffers.fill({});
     m_boundTextures.fill({});
     m_boundStorageImages.fill({});
     m_descriptorsDirty = (vkPipe.numSampledTextures > 0 || vkPipe.numStorageTextures > 0);
@@ -399,9 +400,15 @@ void VulkanRHICommandList::bindUniformBuffer(uint32_t slot, const RHIBuffer& buf
 }
 
 void VulkanRHICommandList::bindStorageBuffer(uint32_t slot, const RHIBuffer& buffer) {
-    (void)slot;
     if (!m_currentPipeline) return;
     const auto& vkBuf = static_cast<const VulkanRHIBuffer&>(buffer);
+    if (m_currentPipeline->isCompute && (m_currentPipeline->numSampledTextures > 0 || m_currentPipeline->numStorageTextures > 0)) {
+        if (slot < MAX_BOUND_SLOTS) {
+            m_boundStorageBuffers[slot] = &vkBuf;
+            m_descriptorsDirty = true;
+        }
+        return;
+    }
     VkDescriptorSet set = vkBuf.getSsboSet();
     VkPipelineBindPoint bp = m_currentPipeline->isCompute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
     uint32_t firstSet = m_currentPipeline->isCompute ? 0u : 1u;
@@ -438,10 +445,12 @@ void VulkanRHICommandList::flushDynamicDescriptors() {
     VkDescriptorSet set = VK_NULL_HANDLE;
     VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &set), "Failed to allocate dynamic texture descriptor set");
 
+    std::vector<VkDescriptorBufferInfo> bufInfos;
     std::vector<VkDescriptorImageInfo> imgInfos;
     std::vector<VkWriteDescriptorSet> writes;
+    bufInfos.reserve(MAX_BOUND_SLOTS);
     imgInfos.reserve(MAX_BOUND_SLOTS * 2);
-    writes.reserve(MAX_BOUND_SLOTS * 2);
+    writes.reserve(MAX_BOUND_SLOTS * 3);
 
     if (!m_currentPipeline->isCompute) {
         for (uint32_t i = 0; i < m_currentPipeline->numSampledTextures; ++i) {
@@ -461,6 +470,18 @@ void VulkanRHICommandList::flushDynamicDescriptors() {
         }
         vkCmdBindDescriptorSets(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_currentPipeline->layout.get(), 2, 1, &set, 0, nullptr);
     } else {
+        for (uint32_t i = 0; i < m_currentPipeline->numStorageBuffers && i < MAX_BOUND_SLOTS; ++i) {
+            if (!m_boundStorageBuffers[i]) continue;
+            bufInfos.push_back({m_boundStorageBuffers[i]->getVkBuffer(), 0, static_cast<VkDeviceSize>(m_boundStorageBuffers[i]->getSize())});
+            VkWriteDescriptorSet w{};
+            w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w.dstSet = set;
+            w.dstBinding = i;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            w.descriptorCount = 1;
+            w.pBufferInfo = &bufInfos.back();
+            writes.push_back(w);
+        }
         uint32_t baseTex = m_currentPipeline->numStorageBuffers;
         uint32_t baseImg = baseTex + m_currentPipeline->numSampledTextures;
         for (uint32_t i = 0; i < m_currentPipeline->numSampledTextures; ++i) {
@@ -691,9 +712,10 @@ void VulkanDevice::createDescriptorResources() {
     });
 
     auto createDynamicPool = [&]() {
-        std::array<VkDescriptorPoolSize, 2> dynSizes{};
+        std::array<VkDescriptorPoolSize, 3> dynSizes{};
         dynSizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256};
         dynSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 128};
+        dynSizes[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64};
 
         VkDescriptorPoolCreateInfo dynInfo{};
         dynInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

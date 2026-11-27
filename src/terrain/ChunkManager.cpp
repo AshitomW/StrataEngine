@@ -79,7 +79,7 @@ void ChunkManager::setRadius(rhi::RHIDevice& device, int newRadius, const Terrai
     regenerateAll(device, config);
 }
 
-void ChunkManager::update(rhi::RHIDevice& device, const glm::vec3& cameraPos, const TerrainConfig& config) {
+void ChunkManager::updateCoordsAndLOD(const glm::vec3& cameraPos, const TerrainConfig& config) {
     int targetCenterX = static_cast<int>(std::floor(cameraPos.x / CHUNK_SIZE));
     int targetCenterZ = static_cast<int>(std::floor(cameraPos.z / CHUNK_SIZE));
 
@@ -105,9 +105,25 @@ void ChunkManager::update(rhi::RHIDevice& device, const glm::vec3& cameraPos, co
             m_dirtyChunks.push_back(&chunk);
         }
     }
+}
+
+void ChunkManager::recordDirtyChunkCompute(rhi::RHICommandList& cmd, const TerrainConfig& config, uint32_t maxChunksPerFrame) {
+    if (m_dirtyChunks.empty()) return;
+
+    size_t count = (maxChunksPerFrame == 0)
+        ? m_dirtyChunks.size()
+        : std::min<size_t>(m_dirtyChunks.size(), maxChunksPerFrame);
+    std::vector<TerrainChunk*> batch(m_dirtyChunks.begin(), m_dirtyChunks.begin() + count);
+    m_generator->recordGenerateChunks(cmd, batch, config);
+    m_dirtyChunks.erase(m_dirtyChunks.begin(), m_dirtyChunks.begin() + count);
+}
+
+void ChunkManager::update(rhi::RHIDevice& device, const glm::vec3& cameraPos, const TerrainConfig& config) {
+    updateCoordsAndLOD(cameraPos, config);
 
     if (!m_dirtyChunks.empty()) {
         m_generator->generateChunks(device, m_dirtyChunks, config);
+        m_dirtyChunks.clear();
     }
 }
 
@@ -132,7 +148,7 @@ void ChunkManager::recordRenderCommands(rhi::RHICommandList& cmd, const Frustum&
         uint32_t lodStep = getLODStep(lod);
 
         for (const auto& chunk : m_chunks) {
-            if (chunk.getLOD() != lod) continue;
+            if (chunk.getLOD() != lod || chunk.needsRegeneration()) continue;
 
             glm::vec2 wp = chunk.getWorldPos();
             glm::vec3 min(wp.x, minY, wp.y);
@@ -167,7 +183,7 @@ void ChunkManager::recordShadowCommands(rhi::RHICommandList& cmd, uint32_t casca
 
         for (const auto& chunk : m_chunks) {
             uint32_t effectiveLod = std::max(chunk.getLOD(), minLod);
-            if (effectiveLod != lod) continue;
+            if (effectiveLod != lod || chunk.needsRegeneration()) continue;
 
             glm::vec2 wp = chunk.getWorldPos();
             cmd.bindStorageBuffer(0, chunk.getSSBOBuffer());
