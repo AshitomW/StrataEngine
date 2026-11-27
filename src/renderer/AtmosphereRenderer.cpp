@@ -9,6 +9,14 @@ AtmosphereRenderer::AtmosphereRenderer(rhi::RHIDevice& device) {
     sampDesc.addressW = rhi::AddressMode::ClampToEdge;
     m_linearSampler = device.createSampler(sampDesc);
 
+    rhi::SamplerDesc cloudSamp{};
+    cloudSamp.minFilter = rhi::Filter::Linear;
+    cloudSamp.magFilter = rhi::Filter::Linear;
+    cloudSamp.addressU = rhi::AddressMode::Repeat;
+    cloudSamp.addressV = rhi::AddressMode::Repeat;
+    cloudSamp.addressW = rhi::AddressMode::Repeat;
+    m_cloudSampler3D = device.createSampler(cloudSamp);
+
     rhi::TextureDesc transDesc{};
     transDesc.width = 256;
     transDesc.height = 64;
@@ -29,6 +37,15 @@ AtmosphereRenderer::AtmosphereRenderer(rhi::RHIDevice& device) {
     svDesc.format = rhi::Format::RGBA16F;
     svDesc.usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::Storage;
     m_skyViewLUT = device.createTexture(svDesc);
+
+    rhi::TextureDesc cloudDesc{};
+    cloudDesc.width = 64;
+    cloudDesc.height = 64;
+    cloudDesc.depth = 64;
+    cloudDesc.format = rhi::Format::RGBA8_UNORM;
+    cloudDesc.type = rhi::TextureType::Tex3D;
+    cloudDesc.usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::Storage;
+    m_cloudNoise3D = device.createTexture(cloudDesc);
 
     rhi::ComputePipelineDesc tPipe{};
     tPipe.computeShader = "atmo_transmittance.comp";
@@ -58,7 +75,16 @@ AtmosphereRenderer::AtmosphereRenderer(rhi::RHIDevice& device) {
     svPipe.localSizeY = 8;
     m_skyViewPipeline = device.createComputePipeline(svPipe);
 
-    // Precompute static Transmittance + Multi-Scattering LUTs once at startup
+    rhi::ComputePipelineDesc cbPipe{};
+    cbPipe.computeShader = "cloud_noise_bake.comp";
+    cbPipe.numStorageBuffers = 0;
+    cbPipe.numSampledTextures = 0;
+    cbPipe.numStorageTextures = 1;
+    cbPipe.localSizeX = 4;
+    cbPipe.localSizeY = 4;
+    cbPipe.localSizeZ = 4;
+    m_cloudBakePipeline = device.createComputePipeline(cbPipe);
+
     device.executeImmediateCompute([&](rhi::RHICommandList& cmd) {
         cmd.textureBarrier(*m_transmittanceLUT, rhi::TextureLayout::Undefined, rhi::TextureLayout::General);
         cmd.bindComputePipeline(*m_transmittancePipeline);
@@ -72,6 +98,12 @@ AtmosphereRenderer::AtmosphereRenderer(rhi::RHIDevice& device) {
         cmd.bindStorageTexture(1, *m_multiScatterLUT);
         cmd.dispatch(32 / 8, 32 / 8, 1);
         cmd.textureBarrier(*m_multiScatterLUT, rhi::TextureLayout::General, rhi::TextureLayout::ShaderReadOnly);
+
+        cmd.textureBarrier(*m_cloudNoise3D, rhi::TextureLayout::Undefined, rhi::TextureLayout::General);
+        cmd.bindComputePipeline(*m_cloudBakePipeline);
+        cmd.bindStorageTexture(0, *m_cloudNoise3D);
+        cmd.dispatch(64 / 4, 64 / 4, 64 / 4);
+        cmd.textureBarrier(*m_cloudNoise3D, rhi::TextureLayout::General, rhi::TextureLayout::ShaderReadOnly);
 
         cmd.textureBarrier(*m_skyViewLUT, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
     });

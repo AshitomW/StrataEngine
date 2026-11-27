@@ -6,9 +6,12 @@
 #include "renderer/FoliageRenderer.hpp"
 #include "renderer/GTAORenderer.hpp"
 #include "renderer/MaterialLibrary.hpp"
+#include "renderer/PrecipitationRenderer.hpp"
 #include "renderer/ShadowRenderer.hpp"
 #include "renderer/SkyRenderer.hpp"
+#include "renderer/StructureRenderer.hpp"
 #include "renderer/WaterRenderer.hpp"
+#include "renderer/WeatherSystem.hpp"
 #include "renderer/FrameContext.hpp"
 #include "renderer/Atmosphere.hpp"
 #include "camera/Camera.hpp"
@@ -86,6 +89,9 @@ private:
     std::unique_ptr<MaterialLibrary> m_materialLibrary;
     std::unique_ptr<GTAORenderer> m_gtaoRenderer;
     std::unique_ptr<FoliageRenderer> m_foliageRenderer;
+    std::unique_ptr<StructureRenderer> m_structureRenderer;
+    std::unique_ptr<PrecipitationRenderer> m_precipitationRenderer;
+    std::unique_ptr<WeatherSystem> m_weatherSystem;
     std::unique_ptr<SkyRenderer> m_skyRenderer;
     std::unique_ptr<WaterRenderer> m_waterRenderer;
 
@@ -110,4 +116,6 @@ private:
     std::unique_ptr<rhi::RHIPipeline> m_postProcessPipeline;
 
     FoliageKey m_lastFoliageKey;
+    FoliageKey m_lastStructureKey;
+    float m_lastTime = 0.0f;
 };

@@ -34,6 +34,9 @@ Renderer::Renderer(rhi::RHIDevice& device, GLFWwindow* window)
     m_materialLibrary = std::make_unique<MaterialLibrary>(device);
     m_gtaoRenderer = std::make_unique<GTAORenderer>(device);
     m_foliageRenderer = std::make_unique<FoliageRenderer>(device);
+    m_structureRenderer = std::make_unique<StructureRenderer>(device);
+    m_precipitationRenderer = std::make_unique<PrecipitationRenderer>(device);
+    m_weatherSystem = std::make_unique<WeatherSystem>();
     m_skyRenderer = std::make_unique<SkyRenderer>(device);
     m_waterRenderer = std::make_unique<WaterRenderer>(device);
 
@@ -236,6 +239,18 @@ void Renderer::updateUBO(uint32_t frameIndex, const Camera& camera, const Terrai
         config.gtaoEnabled ? config.gtaoStrength : 0.0f,
         config.usePBRTextures ? 1.0f : 0.0f
     );
+    ubo.weatherParams = glm::vec4(
+        config.cloudCoverage,
+        config.wetness,
+        config.snowAccumulation,
+        config.precipitationIntensity
+    );
+    ubo.weatherParams2 = glm::vec4(
+        config.windSpeed,
+        config.fogMultiplier,
+        config.lightningFlash,
+        config.precipitationType
+    );
 
     m_uboBuffers[frameIndex]->copyFromHost(&ubo, sizeof(GlobalUBO));
 }
@@ -406,7 +421,23 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
             ImGui::SliderFloat("Mie Anisotropy", &config.mieAnisotropy, 0.2f, 0.92f, "%.2f");
         }
 
-        if (ImGui::CollapsingHeader("Water & Foliage")) {
+        if (ImGui::CollapsingHeader("Weather & Volumetric Clouds", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* weatherItems[] = {"Clear", "Partly Cloudy", "Overcast", "Rain", "Thunderstorm", "Snow", "Foggy"};
+            ImGui::Combo("Weather Preset", &config.weatherType, weatherItems, IM_ARRAYSIZE(weatherItems));
+            ImGui::Checkbox("Auto Weather Transition", &config.weatherAutoTransition);
+            ImGui::SliderFloat("Cloud Coverage", &config.cloudCoverage, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Surface Wetness", &config.wetness, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Snow Accumulation", &config.snowAccumulation, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Precipitation Intensity", &config.precipitationIntensity, 0.0f, 1.0f, "%.2f");
+            const char* precipItems[] = {"None", "Rain", "Snow"};
+            int pType = static_cast<int>(config.precipitationType + 0.5f);
+            if (ImGui::Combo("Precipitation Type", &pType, precipItems, IM_ARRAYSIZE(precipItems))) {
+                config.precipitationType = static_cast<float>(pType);
+            }
+            ImGui::SliderFloat("Fog Multiplier", &config.fogMultiplier, 0.5f, 4.0f, "%.2f");
+        }
+
+        if (ImGui::CollapsingHeader("Water, Foliage & Structures")) {
             ImGui::Checkbox("Show Water [G]", &config.showWater);
             if (ImGui::SliderFloat("Water Elevation [O/P]", &config.waterHeight, -40.0f, 60.0f, "%.1f m")) {
                 needsRegen = true;
@@ -421,6 +452,10 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
             ImGui::Separator();
             ImGui::Checkbox("Show Foliage [E]", &config.showFoliage);
             ImGui::SliderFloat("Foliage Density [U/I]", &config.foliageDensity, 0.0f, EngineConstants::Environment::MAX_FOLIAGE_DENSITY, "%.2f");
+
+            ImGui::Separator();
+            ImGui::Checkbox("Procedural Structures", &config.showStructures);
+            ImGui::SliderFloat("Structure Density", &config.structureDensity, 0.0f, 2.5f, "%.2f");
         }
 
         if (needsRegen) {
@@ -450,6 +485,10 @@ bool Renderer::renderFrame(
         createScreenResources(swW, swH);
     }
 
+    float dt = (m_lastTime > 0.0f) ? std::max(0.001f, time - m_lastTime) : 0.016f;
+    m_lastTime = time;
+    m_weatherSystem->update(config, time, dt);
+
     updateUBO(frameIndex, camera, config, time);
 
     FoliageKey key;
@@ -465,6 +504,14 @@ bool Renderer::renderFrame(
     if (!(key == m_lastFoliageKey)) {
         m_lastFoliageKey = key;
         m_foliageRenderer->updateInstances(m_device, chunkManager.getChunkOrigins(), config);
+    }
+
+    FoliageKey structKey = key;
+    structKey.showFoliage = config.showStructures;
+    structKey.foliageDensity = config.structureDensity;
+    if (!(structKey == m_lastStructureKey)) {
+        m_lastStructureKey = structKey;
+        m_structureRenderer->updateInstances(m_device, chunkManager.getChunkOrigins(), config);
     }
 
     m_device.beginImGuiFrame();
@@ -483,8 +530,8 @@ bool Renderer::renderFrame(
     );
     m_waterRenderer->updateSimulation(*cmd, camera, config, time);
 
-    // 2. 4-Cascade Shadow Atlas
-    m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, frameIndex, config);
+    // 2. 4-Cascade Shadow Atlas (Terrain + Foliage + Structures)
+    m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, *m_structureRenderer, frameIndex, config);
 
     // 3. Offscreen Linear HDR Render Pass A (Opaque: Sky, Terrain, Foliage)
     rhi::RenderPassDesc hdrPass{};
@@ -533,10 +580,17 @@ bool Renderer::renderFrame(
         m_foliageRenderer->recordRenderCommands(frame);
     }
 
+    if (config.showStructures && !config.wireframe) {
+        m_structureRenderer->recordRenderCommands(frame);
+    }
+
     cmd->endRenderPass();
 
-    // 4. Copy Opaque Color & Depth for Water Refraction, then Render Water (Pass B)
-    if (config.showWater && !config.wireframe) {
+    // 4. Copy Opaque Color & Depth for Water Refraction, then Render Water + Precipitation (Pass B)
+    bool hasWaterPass = (config.showWater && !config.wireframe);
+    bool hasPrecipPass = (config.precipitationIntensity > 0.01f && config.precipitationType >= 0.5f && !config.wireframe);
+
+    if (hasWaterPass) {
         cmd->textureBarrier(*m_hdrColor, rhi::TextureLayout::ColorAttachment, rhi::TextureLayout::TransferSrc);
         cmd->textureBarrier(*m_opaqueColorCopy, rhi::TextureLayout::ShaderReadOnly, rhi::TextureLayout::TransferDst);
         cmd->copyTexture(*m_hdrColor, *m_opaqueColorCopy);
@@ -548,7 +602,9 @@ bool Renderer::renderFrame(
         cmd->copyTexture(*m_sceneDepth, *m_opaqueDepthCopy);
         cmd->textureBarrier(*m_opaqueDepthCopy, rhi::TextureLayout::TransferDst, rhi::TextureLayout::ShaderReadOnly);
         cmd->textureBarrier(*m_sceneDepth, rhi::TextureLayout::TransferSrc, rhi::TextureLayout::DepthAttachment);
+    }
 
+    if (hasWaterPass || hasPrecipPass) {
         rhi::RenderPassDesc waterPass{};
         waterPass.colorTarget = m_hdrColor.get();
         waterPass.depthTarget = m_sceneDepth.get();
@@ -558,7 +614,12 @@ bool Renderer::renderFrame(
         cmd->setViewport(0.0f, 0.0f, w, h);
         cmd->setScissor(0, 0, swW, swH);
 
-        m_waterRenderer->recordRenderCommands(frame);
+        if (hasWaterPass) {
+            m_waterRenderer->recordRenderCommands(frame);
+        }
+        if (hasPrecipPass) {
+            m_precipitationRenderer->recordRenderCommands(frame);
+        }
 
         cmd->endRenderPass();
     }

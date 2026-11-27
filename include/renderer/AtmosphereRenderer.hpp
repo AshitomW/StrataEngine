@@ -24,7 +24,9 @@ public:
     const rhi::RHITexture& getTransmittanceLUT() const { return *m_transmittanceLUT; }
     const rhi::RHITexture& getMultiScatterLUT() const { return *m_multiScatterLUT; }
     const rhi::RHITexture& getSkyViewLUT() const { return *m_skyViewLUT; }
+    const rhi::RHITexture& getCloudNoise3D() const { return *m_cloudNoise3D; }
     const rhi::RHISampler& getLinearSampler() const { return *m_linearSampler; }
+    const rhi::RHISampler& getCloudSampler3D() const { return *m_cloudSampler3D; }
 
 private:
     struct AtmoPushConstants {
@@ -35,9 +37,12 @@ private:
     std::unique_ptr<rhi::RHITexture> m_transmittanceLUT;
     std::unique_ptr<rhi::RHITexture> m_multiScatterLUT;
     std::unique_ptr<rhi::RHITexture> m_skyViewLUT;
+    std::unique_ptr<rhi::RHITexture> m_cloudNoise3D;
     std::unique_ptr<rhi::RHISampler> m_linearSampler;
+    std::unique_ptr<rhi::RHISampler> m_cloudSampler3D;
 
     std::unique_ptr<rhi::RHIPipeline> m_transmittancePipeline;
     std::unique_ptr<rhi::RHIPipeline> m_multiScatterPipeline;
     std::unique_ptr<rhi::RHIPipeline> m_skyViewPipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_cloudBakePipeline;
 };

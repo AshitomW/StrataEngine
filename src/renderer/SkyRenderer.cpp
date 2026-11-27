@@ -14,7 +14,7 @@ SkyRenderer::SkyRenderer(rhi::RHIDevice& device) {
     desc.hasDepth = true;
     desc.usesUniformBuffer = true;
     desc.usesStorageBuffer = false;
-    desc.numSampledTextures = 1;
+    desc.numSampledTextures = 2; // SkyViewLUT, CloudNoise3D
 
     m_pipeline = device.createGraphicsPipeline(desc);
 }
@@ -24,5 +24,6 @@ void SkyRenderer::recordRenderCommands(const FrameContext& frame, const Atmosphe
     cmd.bindGraphicsPipeline(*m_pipeline);
     cmd.bindUniformBuffer(0, *frame.globalUBO);
     cmd.bindTexture(0, atmosphere.getSkyViewLUT(), atmosphere.getLinearSampler());
+    cmd.bindTexture(1, atmosphere.getCloudNoise3D(), atmosphere.getCloudSampler3D());
     cmd.draw(3, 1, 0);
 }

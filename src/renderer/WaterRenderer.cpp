@@ -202,7 +202,7 @@ void WaterRenderer::updateSimulation(rhi::RHICommandList& cmd, const Camera& cam
     float camWake = (config.interactiveRipples && distToWater < 4.0f) ? (1.0f - distToWater / 4.0f) : 0.0f;
 
     RipplePC ripPC{};
-    ripPC.rippleParams = glm::vec4(time, dt, config.interactiveRipples ? 0.35f : 0.0f, 2.2f);
+    ripPC.rippleParams = glm::vec4(time, dt, config.interactiveRipples ? (0.20f + config.precipitationIntensity * 1.6f) : 0.0f, 2.2f);
     ripPC.cameraDelta = glm::vec4(uvDelta.x, uvDelta.y, 0.0f, camWake);
     cmd.pushConstants(rhi::ShaderStage::Compute, &ripPC, sizeof(RipplePC));
 

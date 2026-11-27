@@ -24,6 +24,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 lightSpaceMatrices[4];
     vec4 cascadeSplits;
     vec4 shadowParams;
+    vec4 weatherParams;
+    vec4 weatherParams2;
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uWaveDispFoam;

@@ -4,6 +4,7 @@
 #include "camera/Camera.hpp"
 #include "terrain/ChunkManager.hpp"
 #include "renderer/FoliageRenderer.hpp"
+#include "renderer/StructureRenderer.hpp"
 #include "terrain/TerrainTypes.hpp"
 #include <array>
 #include <memory>
@@ -27,6 +28,7 @@ public:
         const rhi::RHIBuffer& globalUBO,
         ChunkManager& chunkManager,
         FoliageRenderer& foliageRenderer,
+        StructureRenderer& structureRenderer,
         uint32_t frameIndex,
         const TerrainConfig& config
     );

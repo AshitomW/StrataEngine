@@ -1,0 +1,90 @@
+#version 450
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(set = 0, binding = 0, rgba8) uniform writeonly image3D outCloudNoise3D;
+
+uint hashU3(uvec3 p, uint seed) {
+    uint h = seed;
+    h ^= p.x * 0x9e3779b9u + 0x7f4a7c15u;
+    h ^= p.y * 0x85ebca6bu + (h << 6) + (h >> 2);
+    h ^= p.z * 0xc2b2ae35u + (h << 5) + (h >> 3);
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
+vec3 hash3Periodic(ivec3 p, int period, uint seed) {
+    ivec3 m = ((p % period) + period) % period;
+    uint h1 = hashU3(uvec3(m), seed);
+    uint h2 = hashU3(uvec3(m), seed + 131u);
+    uint h3 = hashU3(uvec3(m), seed + 257u);
+    return vec3(
+        float(h1 & 0xFFFFu) / 65535.0,
+        float(h2 & 0xFFFFu) / 65535.0,
+        float(h3 & 0xFFFFu) / 65535.0
+    );
+}
+
+float tilePerlin3D(vec3 uvw, int period, uint seed) {
+    vec3 p = uvw * float(period);
+    ivec3 i = ivec3(floor(p));
+    vec3 f = fract(p);
+    vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+    float c000 = dot(hash3Periodic(i + ivec3(0,0,0), period, seed) * 2.0 - 1.0, f - vec3(0,0,0));
+    float c100 = dot(hash3Periodic(i + ivec3(1,0,0), period, seed) * 2.0 - 1.0, f - vec3(1,0,0));
+    float c010 = dot(hash3Periodic(i + ivec3(0,1,0), period, seed) * 2.0 - 1.0, f - vec3(0,1,0));
+    float c110 = dot(hash3Periodic(i + ivec3(1,1,0), period, seed) * 2.0 - 1.0, f - vec3(1,1,0));
+    float c001 = dot(hash3Periodic(i + ivec3(0,0,1), period, seed) * 2.0 - 1.0, f - vec3(0,0,1));
+    float c101 = dot(hash3Periodic(i + ivec3(1,0,1), period, seed) * 2.0 - 1.0, f - vec3(1,0,1));
+    float c011 = dot(hash3Periodic(i + ivec3(0,1,1), period, seed) * 2.0 - 1.0, f - vec3(0,1,1));
+    float c111 = dot(hash3Periodic(i + ivec3(1,1,1), period, seed) * 2.0 - 1.0, f - vec3(1,1,1));
+
+    float x00 = mix(c000, c100, u.x);
+    float x10 = mix(c010, c110, u.x);
+    float x01 = mix(c001, c101, u.x);
+    float x11 = mix(c011, c111, u.x);
+    return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z) * 0.5 + 0.5;
+}
+
+float tileWorley3D(vec3 uvw, int period, uint seed) {
+    vec3 p = uvw * float(period);
+    ivec3 n = ivec3(floor(p));
+    vec3 f = fract(p);
+    float md = 8.0;
+    for (int z = -1; z <= 1; ++z) {
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                ivec3 g = ivec3(x, y, z);
+                vec3 o = hash3Periodic(n + g, period, seed);
+                vec3 r = vec3(g) + o - f;
+                md = min(md, dot(r, r));
+            }
+        }
+    }
+    return 1.0 - clamp(sqrt(md), 0.0, 1.0);
+}
+
+void main() {
+    ivec3 gid = ivec3(gl_GlobalInvocationID);
+    ivec3 dims = imageSize(outCloudNoise3D);
+    if (gid.x >= dims.x || gid.y >= dims.y || gid.z >= dims.z) return;
+
+    vec3 uvw = (vec3(gid) + 0.5) / vec3(dims);
+
+    float pFbm = tilePerlin3D(uvw, 4, 11u) * 0.6 + tilePerlin3D(uvw, 8, 23u) * 0.3 + tilePerlin3D(uvw, 16, 37u) * 0.1;
+    float w1 = tileWorley3D(uvw, 4, 101u);
+    float w2 = tileWorley3D(uvw, 8, 202u);
+    float w3 = tileWorley3D(uvw, 16, 303u);
+
+    float perlinWorley = clamp(mix(pFbm, w1, 0.45), 0.0, 1.0);
+    float medWorley = clamp(w1 * 0.625 + w2 * 0.25 + w3 * 0.125, 0.0, 1.0);
+    float fineWorley = clamp(w2 * 0.65 + w3 * 0.35, 0.0, 1.0);
+    float curl = tilePerlin3D(uvw, 6, 404u);
+
+    imageStore(outCloudNoise3D, gid, vec4(perlinWorley, medWorley, fineWorley, curl));
+}

@@ -173,6 +173,20 @@ struct TerrainConfig {
     float gtaoStrength = 0.75f;
     bool usePBRTextures = true;
 
+    // Milestone 5: Dynamic Weather, Volumetric Clouds & Procedural Structures
+    int weatherType = 1; // 0: Clear, 1: PartlyCloudy, 2: Overcast, 3: Rain, 4: Thunderstorm, 5: Snow, 6: Foggy
+    bool weatherAutoTransition = true;
+    float cloudCoverage = 0.42f;
+    float wetness = 0.0f;
+    float snowAccumulation = 0.0f;
+    float precipitationIntensity = 0.0f;
+    float precipitationType = 0.0f; // 0: none, 1: rain, 2: snow
+    float fogMultiplier = 1.0f;
+    float lightningFlash = 0.0f;
+
+    bool showStructures = true;
+    float structureDensity = 1.0f;
+
     void toggleWater() {
         showWater = !showWater;
     }
@@ -210,6 +224,8 @@ struct GlobalUBO {
     glm::mat4 lightSpaceMatrices[4];
     glm::vec4 cascadeSplits;
     glm::vec4 shadowParams;
+    glm::vec4 weatherParams;
+    glm::vec4 weatherParams2;
 };
 
 struct ShadowPushConstants {

@@ -25,6 +25,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 lightSpaceMatrices[4];
     vec4 cascadeSplits;
     vec4 shadowParams;
+    vec4 weatherParams;
+    vec4 weatherParams2;
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uShadowAtlas;
@@ -345,7 +347,23 @@ void main() {
     vec3 finalNormal = normalize(T * tangentNorm.x + B * tangentNorm.y + N * tangentNorm.z);
     float roughness = clamp(surfaceRoughness, 0.08, 0.98);
 
-    // Underwater and Shoreline Wetness
+    // Dynamic Weather: Snow Accumulation & Rain Wetness / Puddles
+    float cloudCoverage = clamp(ubo.weatherParams.x, 0.0, 1.0);
+    float weatherWetness = clamp(ubo.weatherParams.y, 0.0, 1.0);
+    float weatherSnow = clamp(ubo.weatherParams.z, 0.0, 1.0);
+    float windSpeed = max(ubo.weatherParams2.x, 1.0);
+    float fogMult = max(ubo.weatherParams2.y, 0.5);
+    float lightning = ubo.weatherParams2.z;
+    float timeVal = ubo.terrainParams.z;
+
+    if (weatherSnow > 0.01 && h > waterHeight + 0.5) {
+        float snowMask = smoothstep(0.35, 0.75, N.y + gradientNoise(inWorldPos.xz * 0.25) * 0.15) * weatherSnow;
+        surfaceAlbedo = mix(surfaceAlbedo, vec3(0.88, 0.92, 0.97), snowMask * 0.92);
+        roughness = mix(roughness, 0.36, snowMask);
+        isSnow = max(isSnow, snowMask);
+    }
+
+    // Underwater, Shoreline Wetness & Rain Puddles
     if (h < waterHeight) {
         vec3 submergedSand = vec3(0.14, 0.12, 0.10);
         vec3 riverBed = vec3(0.10, 0.09, 0.08);
@@ -354,14 +372,36 @@ void main() {
         surfaceAlbedo = mix(surfaceAlbedo * 0.65, underwaterAlbedo, smoothstep(0.2, 2.5, depth));
         roughness = 0.25;
     } else {
-        float wetness = smoothstep(1.6, 0.0, h - waterHeight);
-        surfaceAlbedo = mix(surfaceAlbedo, surfaceAlbedo * 0.58, wetness * 0.70);
-        roughness = mix(roughness, 0.12, wetness * 0.85);
+        float shoreWet = smoothstep(1.6, 0.0, h - waterHeight);
+        float totalWet = clamp(max(shoreWet, weatherWetness), 0.0, 1.0);
+        surfaceAlbedo = mix(surfaceAlbedo, surfaceAlbedo * 0.56, totalWet * 0.72);
+        roughness = mix(roughness, 0.16, totalWet * 0.85);
+
+        // Flat rain puddles with animated raindrop ripples
+        if (weatherWetness > 0.25 && slope < 0.08) {
+            float puddleNoise = fbm(inWorldPos.xz * 0.09, 2);
+            float puddleMask = smoothstep(0.08, 0.28, puddleNoise + (weatherWetness - 0.5) * 0.35) * smoothstep(0.08, 0.02, slope);
+            if (puddleMask > 0.01) {
+                float r1 = sin(length(fract(inWorldPos.xz * 0.8) - 0.5) * 28.0 - timeVal * 10.0) * 0.04;
+                vec3 puddleN = normalize(vec3(r1, 1.0, r1 * 0.7));
+                finalNormal = normalize(mix(finalNormal, puddleN, puddleMask * 0.85));
+                roughness = mix(roughness, 0.04, puddleMask);
+                surfaceAlbedo = mix(surfaceAlbedo, surfaceAlbedo * 0.45, puddleMask * 0.7);
+            }
+        }
     }
 
-    // Cook-Torrance PBR Direct Lighting + 4-Cascade CSM Shadow
+    // Cook-Torrance PBR Direct Lighting + 4-Cascade CSM Shadow + Drifting Cloud Shadows
     float viewDepth = max(-(ubo.view * vec4(inWorldPos, 1.0)).z, 0.0);
     float shadow = sampleTerrainShadow(inWorldPos, N, L, viewDepth);
+
+    if (cloudCoverage > 0.10) {
+        vec2 cloudProjXZ = inWorldPos.xz + L.xz / max(abs(L.y), 0.15) * 1200.0;
+        vec2 cloudDrift = vec2(timeVal * windSpeed * 1.4, timeVal * windSpeed * 0.7);
+        float cShadow = fbm((cloudProjXZ + cloudDrift) * 0.0012, 3) * 0.5 + 0.5;
+        float cAtten = mix(1.0, 0.38, smoothstep(1.0 - cloudCoverage * 0.85, 1.0 - cloudCoverage * 0.85 + 0.30, cShadow));
+        shadow *= cAtten;
+    }
 
     float NdotL = max(dot(finalNormal, L), 0.0);
     float NdotV = max(dot(finalNormal, V), 0.001);
@@ -379,8 +419,13 @@ void main() {
     vec3 kD = (vec3(1.0) - F);
 
     float sunIntensity = ubo.atmosphereParams.z;
-    vec3 sunRadiance = ubo.sunColor.rgb * sunIntensity;
+    vec3 sunRadiance = ubo.sunColor.rgb * sunIntensity * mix(1.0, 0.45, smoothstep(0.65, 0.98, cloudCoverage));
     vec3 directPBR = (kD * (surfaceAlbedo / PI) + specularBRDF) * sunRadiance * NdotL * shadow;
+
+    // Lightning flash illumination
+    if (lightning > 0.01) {
+        directPBR += (surfaceAlbedo / PI) * vec3(0.75, 0.85, 1.0) * lightning * 3.5 * clamp(N.y * 0.5 + 0.5, 0.2, 1.0);
+    }
 
     // Soft wrap fill
     float wrapFill = pow(clamp(dot(finalNormal, L) * 0.35 + 0.65, 0.0, 1.0), 2.0) * 0.06;
@@ -388,7 +433,6 @@ void main() {
 
     // Caustics on submerged floor
     if (h < waterHeight && L.y > -0.05) {
-        float timeVal = ubo.terrainParams.z;
         vec2 cUV1 = inWorldPos.xz * 0.45 + vec2(timeVal * 0.4, timeVal * 0.25);
         vec2 cUV2 = inWorldPos.xz * 0.75 - vec2(timeVal * 0.3, -timeVal * 0.5);
         float c1 = abs(sin(cUV1.x * 3.14 + sin(cUV1.y * 2.5 + timeVal)));
@@ -415,16 +459,16 @@ void main() {
 
     vec3 litColor = ambientPBR + directPBR;
 
-    // Atmospheric Distance Fog & Valley Mist
+    // Atmospheric Distance Fog & Valley Mist (modulated by Weather)
     float dist = length(ubo.cameraPos.xyz - inWorldPos);
     float maxDist = max(ubo.biomeParams.w, 150.0);
 
-    float distFactor = clamp(dist / maxDist, 0.0, 1.0);
+    float distFactor = clamp((dist / maxDist) * fogMult, 0.0, 1.0);
     float expFog = 1.0 - exp(-pow(distFactor * 1.7, 2.0));
-    float edgeFade = smoothstep(0.70, 0.94, distFactor);
+    float edgeFade = smoothstep(0.70, 0.94, clamp(dist / maxDist, 0.0, 1.0));
     float distFog = clamp(max(expFog, edgeFade), 0.0, 1.0);
 
-    float heightHaze = exp(-max(inHeight - waterHeight, 0.0) * 0.035) * 0.22;
+    float heightHaze = exp(-max(inHeight - waterHeight, 0.0) * 0.035) * (0.22 * fogMult);
     float valleyFog = heightHaze * clamp(dist / (maxDist * 0.4), 0.0, 1.0);
 
     float fogFactor = clamp(distFog + valleyFog, 0.0, 1.0);

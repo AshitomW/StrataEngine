@@ -23,6 +23,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     mat4 lightSpaceMatrices[4];
     vec4 cascadeSplits;
     vec4 shadowParams;
+    vec4 weatherParams;
+    vec4 weatherParams2;
 } ubo;
 
 layout(location = 0) out vec3 outWorldPos;
@@ -48,8 +50,9 @@ void main() {
     localNormal.xz = rotMat * localNormal.xz;
 
     if (objType == 0u || objType == 1u || objType == 3u) {
-        float windStrength = (objType == 3u) ? 0.35 : 0.15;
-        float windSway = sin(time * 2.5 + inInstancePos.x * 0.35 + inInstancePos.z * 0.25) * windStrength * max(0.0, inPosition.y);
+        float windScale = clamp(ubo.weatherParams2.x * 0.14, 0.35, 3.0);
+        float windStrength = ((objType == 3u) ? 0.35 : 0.15) * windScale;
+        float windSway = sin(time * (2.5 + windScale * 0.8) + inInstancePos.x * 0.35 + inInstancePos.z * 0.25) * windStrength * max(0.0, inPosition.y);
         localPos.x += windSway;
         localPos.z += windSway * 0.5;
     }

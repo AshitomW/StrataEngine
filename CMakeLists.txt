@@ -47,13 +47,19 @@ set(SHADERS
     atmo_skyview.comp
     bloom_downsample.comp
     bloom_upsample.comp
+    cloud_noise_bake.comp
     gtao.comp
     gtao_blur.comp
     material_bake.comp
     postprocess.vert
     postprocess.frag
+    precipitation.vert
+    precipitation.frag
     shadow_terrain.vert
     shadow_foliage.vert
+    shadow_structure.vert
+    structure.vert
+    structure.frag
     terrain.comp
     terrain.vert
     terrain.frag
@@ -134,10 +140,13 @@ set(ENGINE_SOURCES
     src/renderer/FoliageRenderer.cpp
     src/renderer/GTAORenderer.cpp
     src/renderer/MaterialLibrary.cpp
+    src/renderer/PrecipitationRenderer.cpp
     src/renderer/Renderer.cpp
     src/renderer/ShadowRenderer.cpp
     src/renderer/SkyRenderer.cpp
+    src/renderer/StructureRenderer.cpp
     src/renderer/WaterRenderer.cpp
+    src/renderer/WeatherSystem.cpp
     src/terrain/ChunkManager.cpp
     src/terrain/ComputeTerrainGenerator.cpp
     src/terrain/TerrainChunk.cpp
