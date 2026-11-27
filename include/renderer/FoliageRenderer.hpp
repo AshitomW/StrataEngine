@@ -1,11 +1,9 @@
 #pragma once
 
-#include "core/VulkanContext.hpp"
-#include "core/VulkanBuffer.hpp"
-#include "core/PipelineBuilder.hpp"
-#include "core/VulkanResource.hpp"
+#include "rhi/RHIDevice.hpp"
 #include "renderer/FrameContext.hpp"
 #include <array>
+#include <memory>
 #include <vector>
 #include <glm/glm.hpp>
 
@@ -29,14 +27,14 @@ class FoliageRenderer {
 public:
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
-    FoliageRenderer(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout);
-    ~FoliageRenderer();
+    explicit FoliageRenderer(rhi::RHIDevice& device);
+    ~FoliageRenderer() = default;
 
     FoliageRenderer(const FoliageRenderer&) = delete;
     FoliageRenderer& operator=(const FoliageRenderer&) = delete;
 
     void updateInstances(
-        const VulkanContext& context,
+        rhi::RHIDevice& device,
         const std::vector<glm::vec2>& chunkOrigins,
         const TerrainConfig& config
     );
@@ -44,8 +42,8 @@ public:
     void recordRenderCommands(const FrameContext& frame);
 
 private:
-    void createModels(const VulkanContext& context);
-    void createPipeline(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout);
+    void createModels(rhi::RHIDevice& device);
+    void createPipeline(rhi::RHIDevice& device);
     void generateScatterForChunk(
         glm::vec2 chunkOrigin,
         const TerrainConfig& config,
@@ -56,17 +54,14 @@ private:
     glm::vec3 sampleExactNormal(glm::vec2 worldPos, const TerrainConfig& config, float h) const;
 
 private:
-    VkDevice m_device = VK_NULL_HANDLE;
-    vkh::PipelineHandle m_pipeline;
-    vkh::PipelineLayoutHandle m_pipelineLayout;
-
-    VulkanBuffer m_vertexBuffer;
-    VulkanBuffer m_indexBuffer;
+    std::unique_ptr<rhi::RHIPipeline> m_pipeline;
+    std::unique_ptr<rhi::RHIBuffer> m_vertexBuffer;
+    std::unique_ptr<rhi::RHIBuffer> m_indexBuffer;
 
     std::vector<ModelMesh> m_modelMeshes;
 
     static constexpr size_t NUM_MODELS = 7;
     std::vector<std::vector<FoliageInstance>> m_instancesByType;
-    std::array<std::array<VulkanBuffer, MAX_FRAMES_IN_FLIGHT>, NUM_MODELS> m_instanceBuffers;
+    std::array<std::array<std::unique_ptr<rhi::RHIBuffer>, MAX_FRAMES_IN_FLIGHT>, NUM_MODELS> m_instanceBuffers;
     std::array<uint32_t, NUM_MODELS> m_instanceCounts{};
 };

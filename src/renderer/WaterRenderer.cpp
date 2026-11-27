@@ -1,15 +1,13 @@
 #include "renderer/WaterRenderer.hpp"
 #include <cmath>
+#include <vector>
 
-WaterRenderer::WaterRenderer(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout)
-    : m_device(context.getDevice()) {
-    createMesh(context);
-    createPipeline(context, renderPass, uboSetLayout);
+WaterRenderer::WaterRenderer(rhi::RHIDevice& device) {
+    createMesh(device);
+    createPipeline(device);
 }
 
-WaterRenderer::~WaterRenderer() = default;
-
-void WaterRenderer::createMesh(const VulkanContext& context) {
+void WaterRenderer::createMesh(rhi::RHIDevice& device) {
     const uint32_t RES = EngineConstants::Water::WATER_GRID_RES;
     const float GRID_SPAN = 2400.0f;
 
@@ -50,87 +48,46 @@ void WaterRenderer::createMesh(const VulkanContext& context) {
 
     m_indexCount = static_cast<uint32_t>(indices.size());
 
-    VkDeviceSize vSize = sizeof(WaterVertex) * vertices.size();
-    VulkanBuffer vStaging(context, vSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vStaging.copyFromHost(vertices.data(), vSize);
-    m_vertexBuffer.create(context, vSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VulkanBuffer::copyBuffer(context, vStaging.getBuffer(), m_vertexBuffer.getBuffer(), vSize);
+    size_t vSize = sizeof(WaterVertex) * vertices.size();
+    m_vertexBuffer = device.createBuffer(vSize, rhi::BufferUsage::Vertex | rhi::BufferUsage::TransferDst, rhi::MemoryUsage::GpuOnly);
+    device.uploadBuffer(*m_vertexBuffer, vertices.data(), vSize);
 
-    VkDeviceSize iSize = sizeof(uint32_t) * indices.size();
-    VulkanBuffer iStaging(context, iSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    iStaging.copyFromHost(indices.data(), iSize);
-    m_indexBuffer.create(context, iSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VulkanBuffer::copyBuffer(context, iStaging.getBuffer(), m_indexBuffer.getBuffer(), iSize);
+    size_t iSize = sizeof(uint32_t) * indices.size();
+    m_indexBuffer = device.createBuffer(iSize, rhi::BufferUsage::Index | rhi::BufferUsage::TransferDst, rhi::MemoryUsage::GpuOnly);
+    device.uploadBuffer(*m_indexBuffer, indices.data(), iSize);
 }
 
-void WaterRenderer::createPipeline(const VulkanContext&, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout) {
-    VkPushConstantRange pcRange{};
-    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pcRange.offset = 0;
-    pcRange.size = sizeof(WaterPushConstants);
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &uboSetLayout;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pcRange;
-
-    VkPipelineLayout layout;
-    VK_CHECK(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &layout), "Failed to create water pipeline layout");
-    m_pipelineLayout = vkh::PipelineLayoutHandle(
-        layout,
-        [device = m_device](VkPipelineLayout l) { vkDestroyPipelineLayout(device, l, nullptr); }
-    );
-
-    VkShaderModule vertShader = PipelineBuilder::createShaderModule(m_device, "shaders/water.vert.spv");
-    VkShaderModule fragShader = PipelineBuilder::createShaderModule(m_device, "shaders/water.frag.spv");
-
-    std::vector<VkVertexInputBindingDescription> bindings = {
-        {0, sizeof(WaterVertex), VK_VERTEX_INPUT_RATE_VERTEX}
+void WaterRenderer::createPipeline(rhi::RHIDevice& device) {
+    rhi::GraphicsPipelineDesc desc{};
+    desc.vertexShader = "water.vert";
+    desc.fragmentShader = "water.frag";
+    desc.vertexBindings = {
+        {0, sizeof(WaterVertex), rhi::VertexInputRate::Vertex}
     };
-    std::vector<VkVertexInputAttributeDescription> attributes = {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(WaterVertex, pos)},
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(WaterVertex, uv)}
+    desc.vertexAttributes = {
+        {0, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(WaterVertex, pos))},
+        {1, 0, rhi::Format::RG32F, static_cast<uint32_t>(offsetof(WaterVertex, uv))}
     };
+    desc.cullMode = rhi::CullMode::None;
+    desc.depthTestEnable = true;
+    desc.depthWriteEnable = false;
+    desc.depthCompareOp = rhi::CompareOp::LessOrEqual;
+    desc.blendEnable = true;
+    desc.usesUniformBuffer = true;
+    desc.usesStorageBuffer = false;
+    desc.pushConstantSize = sizeof(WaterPushConstants);
+    desc.pushConstantStages = rhi::ShaderStage::Vertex | rhi::ShaderStage::Fragment;
 
-    PipelineBuilder builder;
-    builder.setVertexShader(vertShader)
-        .setFragmentShader(fragShader)
-        .setVertexInput(bindings, attributes)
-        .setCullMode(VK_CULL_MODE_NONE)
-        .setDepthState(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setBlendEnable(true)
-        .setPipelineLayout(layout)
-        .setRenderPass(renderPass);
-
-    m_pipeline = vkh::PipelineHandle(
-        builder.build(m_device),
-        [device = m_device](VkPipeline p) { vkDestroyPipeline(device, p, nullptr); }
-    );
-
-    vkDestroyShaderModule(m_device, vertShader, nullptr);
-    vkDestroyShaderModule(m_device, fragShader, nullptr);
+    m_pipeline = device.createGraphicsPipeline(desc);
 }
 
 void WaterRenderer::recordRenderCommands(const FrameContext& frame) {
     const TerrainConfig& config = *frame.config;
     if (!config.showWater) return;
 
-    VkCommandBuffer cmd = frame.commandBuffer;
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.get());
-
-    vkCmdBindDescriptorSets(
-        cmd,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout.get(),
-        0,
-        1,
-        &frame.globalDescriptorSet,
-        0,
-        nullptr
-    );
+    rhi::RHICommandList& cmd = *frame.cmd;
+    cmd.bindGraphicsPipeline(*m_pipeline);
+    cmd.bindUniformBuffer(0, *frame.globalUBO);
 
     const uint32_t RES = EngineConstants::Water::WATER_GRID_RES;
     const float GRID_SPAN = 2400.0f;
@@ -144,19 +101,8 @@ void WaterRenderer::recordRenderCommands(const FrameContext& frame) {
     pc.waterParams2 = glm::vec4(config.waterClarity, 1.0f, config.frequency, config.debugMode);
     pc.gridCenter = glm::vec4(snappedX, snappedZ, GRID_SPAN, 0.0f);
 
-    vkCmdPushConstants(
-        cmd,
-        m_pipelineLayout.get(),
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        0,
-        sizeof(WaterPushConstants),
-        &pc
-    );
-
-    VkBuffer vBuffers[] = {m_vertexBuffer.getBuffer()};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(cmd, 0, 1, vBuffers, offsets);
-    vkCmdBindIndexBuffer(cmd, m_indexBuffer.getBuffer(), 0, VK_INDEX_TYPE_UINT32);
-
-    vkCmdDrawIndexed(cmd, m_indexCount, 1, 0, 0, 0);
+    cmd.pushConstants(rhi::ShaderStage::Vertex | rhi::ShaderStage::Fragment, &pc, sizeof(WaterPushConstants));
+    cmd.bindVertexBuffer(0, *m_vertexBuffer);
+    cmd.bindIndexBuffer(*m_indexBuffer);
+    cmd.drawIndexed(m_indexCount, 1, 0);
 }

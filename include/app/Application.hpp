@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/VulkanContext.hpp"
+#include "rhi/RHIDevice.hpp"
 #include "terrain/ChunkManager.hpp"
 #include "renderer/Renderer.hpp"
 #include "camera/Camera.hpp"
@@ -8,15 +8,23 @@
 #include <memory>
 #include <string>
 
+struct GLFWwindow;
+
 class Application {
 public:
-    Application(int width = 1280, int height = 720, const char* title = "Vulkan Modular Terrain Engine");
+    Application(
+        int width = 1280,
+        int height = 720,
+        const char* title = "Next-Gen Procedural Terrain Engine",
+        rhi::BackendType backend = rhi::BackendType::Vulkan
+    );
     ~Application();
 
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
     void run();
+    int runSmokeTest(int numFrames = 5);
 
 private:
     void initWindow();
@@ -30,17 +38,17 @@ private:
     int m_width;
     int m_height;
     const char* m_title;
+    rhi::BackendType m_backend;
 
     GLFWwindow* m_window = nullptr;
 
-    std::unique_ptr<VulkanContext> m_context;
+    std::unique_ptr<rhi::RHIDevice> m_device;
     std::unique_ptr<ChunkManager> m_chunkManager;
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<Camera> m_camera;
 
     TerrainConfig m_config;
-    bool m_showHUD = true;
-    const char* m_currentPreset = "Mountains";
+    HUDInfo m_hudInfo;
 
     float m_lastFrameTime = 0.0f;
     float m_fpsTimer = 0.0f;

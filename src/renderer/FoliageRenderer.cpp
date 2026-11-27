@@ -170,17 +170,14 @@ float evaluatePresetHeightCPU(glm::vec2 worldPos, uint32_t presetType, float bas
 
 }
 
-FoliageRenderer::FoliageRenderer(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout)
-    : m_device(context.getDevice()) {
-    createModels(context);
-    createPipeline(context, renderPass, uboSetLayout);
+FoliageRenderer::FoliageRenderer(rhi::RHIDevice& device) {
+    createModels(device);
+    createPipeline(device);
 
     m_instancesByType.resize(NUM_MODELS);
 }
 
-FoliageRenderer::~FoliageRenderer() = default;
-
-void FoliageRenderer::createModels(const VulkanContext& context) {
+void FoliageRenderer::createModels(rhi::RHIDevice& device) {
     std::vector<FoliageVertex> vertices;
     std::vector<uint32_t> indices;
     m_modelMeshes.resize(NUM_MODELS);
@@ -319,63 +316,39 @@ void FoliageRenderer::createModels(const VulkanContext& context) {
     }
     m_modelMeshes[6].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[6].firstIndex;
 
-    VkDeviceSize vSize = sizeof(FoliageVertex) * vertices.size();
-    VulkanBuffer vStaging(context, vSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vStaging.copyFromHost(vertices.data(), vSize);
-    m_vertexBuffer.create(context, vSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VulkanBuffer::copyBuffer(context, vStaging.getBuffer(), m_vertexBuffer.getBuffer(), vSize);
+    size_t vSize = sizeof(FoliageVertex) * vertices.size();
+    m_vertexBuffer = device.createBuffer(vSize, rhi::BufferUsage::Vertex | rhi::BufferUsage::TransferDst, rhi::MemoryUsage::GpuOnly);
+    device.uploadBuffer(*m_vertexBuffer, vertices.data(), vSize);
 
-    VkDeviceSize iSize = sizeof(uint32_t) * indices.size();
-    VulkanBuffer iStaging(context, iSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    iStaging.copyFromHost(indices.data(), iSize);
-    m_indexBuffer.create(context, iSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VulkanBuffer::copyBuffer(context, iStaging.getBuffer(), m_indexBuffer.getBuffer(), iSize);
+    size_t iSize = sizeof(uint32_t) * indices.size();
+    m_indexBuffer = device.createBuffer(iSize, rhi::BufferUsage::Index | rhi::BufferUsage::TransferDst, rhi::MemoryUsage::GpuOnly);
+    device.uploadBuffer(*m_indexBuffer, indices.data(), iSize);
 }
 
-void FoliageRenderer::createPipeline(const VulkanContext&, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout) {
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &uboSetLayout;
-
-    VkPipelineLayout layout;
-    VK_CHECK(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &layout), "Failed to create foliage pipeline layout");
-    m_pipelineLayout = vkh::PipelineLayoutHandle(
-        layout,
-        [device = m_device](VkPipelineLayout l) { vkDestroyPipelineLayout(device, l, nullptr); }
-    );
-
-    VkShaderModule vertShader = PipelineBuilder::createShaderModule(m_device, "shaders/foliage.vert.spv");
-    VkShaderModule fragShader = PipelineBuilder::createShaderModule(m_device, "shaders/foliage.frag.spv");
-
-    std::vector<VkVertexInputBindingDescription> bindings = {
-        {0, sizeof(FoliageVertex), VK_VERTEX_INPUT_RATE_VERTEX},
-        {1, sizeof(FoliageInstance), VK_VERTEX_INPUT_RATE_INSTANCE}
+void FoliageRenderer::createPipeline(rhi::RHIDevice& device) {
+    rhi::GraphicsPipelineDesc desc{};
+    desc.vertexShader = "foliage.vert";
+    desc.fragmentShader = "foliage.frag";
+    desc.vertexBindings = {
+        {0, sizeof(FoliageVertex), rhi::VertexInputRate::Vertex},
+        {1, sizeof(FoliageInstance), rhi::VertexInputRate::Instance}
     };
-    std::vector<VkVertexInputAttributeDescription> attributes = {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FoliageVertex, pos)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FoliageVertex, normal)},
-        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FoliageVertex, color)},
-        {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(FoliageInstance, posScale)},
-        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(FoliageInstance, params)}
+    desc.vertexAttributes = {
+        {0, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(FoliageVertex, pos))},
+        {1, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(FoliageVertex, normal))},
+        {2, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(FoliageVertex, color))},
+        {3, 1, rhi::Format::RGBA32F, static_cast<uint32_t>(offsetof(FoliageInstance, posScale))},
+        {4, 1, rhi::Format::RGBA32F, static_cast<uint32_t>(offsetof(FoliageInstance, params))}
     };
+    desc.cullMode = rhi::CullMode::None;
+    desc.depthTestEnable = true;
+    desc.depthWriteEnable = true;
+    desc.depthCompareOp = rhi::CompareOp::LessOrEqual;
+    desc.blendEnable = false;
+    desc.usesUniformBuffer = true;
+    desc.usesStorageBuffer = false;
 
-    PipelineBuilder builder;
-    builder.setVertexShader(vertShader)
-        .setFragmentShader(fragShader)
-        .setVertexInput(bindings, attributes)
-        .setCullMode(VK_CULL_MODE_NONE)
-        .setDepthState(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setPipelineLayout(layout)
-        .setRenderPass(renderPass);
-
-    m_pipeline = vkh::PipelineHandle(
-        builder.build(m_device),
-        [device = m_device](VkPipeline p) { vkDestroyPipeline(device, p, nullptr); }
-    );
-
-    vkDestroyShaderModule(m_device, vertShader, nullptr);
-    vkDestroyShaderModule(m_device, fragShader, nullptr);
+    m_pipeline = device.createGraphicsPipeline(desc);
 }
 
 float FoliageRenderer::sampleExactHeight(glm::vec2 worldPos, const TerrainConfig& config) const {
@@ -548,7 +521,7 @@ void FoliageRenderer::generateScatterForChunk(
 }
 
 void FoliageRenderer::updateInstances(
-    const VulkanContext& context,
+    rhi::RHIDevice& device,
     const std::vector<glm::vec2>& chunkOrigins,
     const TerrainConfig& config
 ) {
@@ -580,21 +553,15 @@ void FoliageRenderer::updateInstances(
         m_instanceCounts[type] = count;
         if (count == 0) continue;
 
-        VkDeviceSize bufferSize = sizeof(FoliageInstance) * count;
+        size_t bufferSize = sizeof(FoliageInstance) * count;
         for (uint32_t f = 0; f < MAX_FRAMES_IN_FLIGHT; ++f) {
-            VulkanBuffer& buffer = m_instanceBuffers[type][f];
+            auto& buffer = m_instanceBuffers[type][f];
 
-            if (!buffer.isValid() || buffer.getSize() < bufferSize) {
-                buffer.create(
-                    context,
-                    bufferSize,
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                );
+            if (!buffer || buffer->getSize() < bufferSize) {
+                buffer = device.createBuffer(bufferSize, rhi::BufferUsage::Vertex, rhi::MemoryUsage::CpuToGpu);
             }
 
-            void* dst = buffer.map();
-            std::memcpy(dst, m_instancesByType[type].data(), static_cast<size_t>(bufferSize));
+            buffer->copyFromHost(m_instancesByType[type].data(), bufferSize);
         }
     }
 }
@@ -606,32 +573,20 @@ void FoliageRenderer::recordRenderCommands(const FrameContext& frame) {
     }
     if (!hasAny) return;
 
-    VkCommandBuffer cmd = frame.commandBuffer;
+    rhi::RHICommandList& cmd = *frame.cmd;
     uint32_t frameIndex = frame.frameIndex;
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.get());
-
-    vkCmdBindDescriptorSets(
-        cmd,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout.get(),
-        0,
-        1,
-        &frame.globalDescriptorSet,
-        0,
-        nullptr
-    );
-
-    vkCmdBindIndexBuffer(cmd, m_indexBuffer.getBuffer(), 0, VK_INDEX_TYPE_UINT32);
+    cmd.bindGraphicsPipeline(*m_pipeline);
+    cmd.bindUniformBuffer(0, *frame.globalUBO);
+    cmd.bindIndexBuffer(*m_indexBuffer);
+    cmd.bindVertexBuffer(0, *m_vertexBuffer);
 
     for (uint32_t type = 0; type < NUM_MODELS; ++type) {
         if (m_instanceCounts[type] == 0) continue;
 
-        VkBuffer vBuffers[] = {m_vertexBuffer.getBuffer(), m_instanceBuffers[type][frameIndex].getBuffer()};
-        VkDeviceSize offsets[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, vBuffers, offsets);
+        cmd.bindVertexBuffer(1, *m_instanceBuffers[type][frameIndex]);
 
         const auto& mesh = m_modelMeshes[type];
-        vkCmdDrawIndexed(cmd, mesh.indexCount, m_instanceCounts[type], mesh.firstIndex, 0, 0);
+        cmd.drawIndexed(mesh.indexCount, m_instanceCounts[type], mesh.firstIndex);
     }
 }

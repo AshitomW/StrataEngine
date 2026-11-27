@@ -15,7 +15,7 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
 
 layout(std430, set = 1, binding = 0) readonly buffer TerrainSSBO {
     vec4 data[];
-};
+} terrainSSBO;
 
 layout(push_constant) uniform ChunkPC {
     vec4 chunkOffset;
@@ -43,7 +43,7 @@ void main() {
     uint ssboZ = min(lodZ * lodStep, totalGridRes - 1u);
     uint ssboIndex = ssboZ * totalGridRes + ssboX;
 
-    vec4 vertexData = data[ssboIndex];
+    vec4 vertexData = terrainSSBO.data[ssboIndex];
     float height = vertexData.x;
     vec3 normal = normalize(vertexData.yzw);
 

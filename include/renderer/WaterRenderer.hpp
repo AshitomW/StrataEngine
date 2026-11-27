@@ -1,10 +1,8 @@
 #pragma once
 
-#include "core/VulkanContext.hpp"
-#include "core/VulkanBuffer.hpp"
-#include "core/PipelineBuilder.hpp"
-#include "core/VulkanResource.hpp"
+#include "rhi/RHIDevice.hpp"
 #include "renderer/FrameContext.hpp"
+#include <memory>
 
 struct WaterVertex {
     glm::vec3 pos;
@@ -13,8 +11,8 @@ struct WaterVertex {
 
 class WaterRenderer {
 public:
-    WaterRenderer(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout);
-    ~WaterRenderer();
+    explicit WaterRenderer(rhi::RHIDevice& device);
+    ~WaterRenderer() = default;
 
     WaterRenderer(const WaterRenderer&) = delete;
     WaterRenderer& operator=(const WaterRenderer&) = delete;
@@ -22,15 +20,12 @@ public:
     void recordRenderCommands(const FrameContext& frame);
 
 private:
-    void createMesh(const VulkanContext& context);
-    void createPipeline(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout);
+    void createMesh(rhi::RHIDevice& device);
+    void createPipeline(rhi::RHIDevice& device);
 
 private:
-    VkDevice m_device = VK_NULL_HANDLE;
-    vkh::PipelineHandle m_pipeline;
-    vkh::PipelineLayoutHandle m_pipelineLayout;
-
-    VulkanBuffer m_vertexBuffer;
-    VulkanBuffer m_indexBuffer;
+    std::unique_ptr<rhi::RHIPipeline> m_pipeline;
+    std::unique_ptr<rhi::RHIBuffer> m_vertexBuffer;
+    std::unique_ptr<rhi::RHIBuffer> m_indexBuffer;
     uint32_t m_indexCount = 0;
 };

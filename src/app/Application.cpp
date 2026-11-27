@@ -1,30 +1,37 @@
 #include "app/Application.hpp"
+#include "imgui.h"
+#include <GLFW/glfw3.h>
+#include <chrono>
 #include <iostream>
 #include <iomanip>
 #include <random>
+#include <stdexcept>
 
-Application::Application(int width, int height, const char* title)
-    : m_width(width), m_height(height), m_title(title) {
+Application::Application(int width, int height, const char* title, rhi::BackendType backend)
+    : m_width(width), m_height(height), m_title(title), m_backend(backend) {
     initWindow();
 
-    m_context = std::make_unique<VulkanContext>(m_window);
+    m_device = rhi::RHIDevice::create(m_backend, m_window);
+
+    std::string fullTitle = std::string(m_title) + " [" + m_device->getBackendName() + " - " + m_device->getDeviceName() + "]";
+    glfwSetWindowTitle(m_window, fullTitle.c_str());
 
     m_camera = std::make_unique<Camera>(glm::vec3(0.0f, 65.0f, 120.0f));
     m_camera->setMouseCaptured(true);
 
-    m_chunkManager = std::make_unique<ChunkManager>(*m_context, m_config.viewRadius);
+    m_chunkManager = std::make_unique<ChunkManager>(*m_device, m_config.viewRadius);
 
-    m_renderer = std::make_unique<Renderer>(*m_context, m_window, m_chunkManager->getSSBOSetLayout());
+    m_renderer = std::make_unique<Renderer>(*m_device, m_window);
     m_camera->setAspectRatio(m_renderer->getAspectRatio());
 
-    m_chunkManager->regenerateAll(*m_context, m_config);
+    m_chunkManager->regenerateAll(*m_device, m_config);
 }
 
 Application::~Application() {
     m_renderer.reset();
     m_chunkManager.reset();
     m_camera.reset();
-    m_context.reset();
+    m_device.reset();
 
     if (m_window) {
         glfwDestroyWindow(m_window);
@@ -61,10 +68,10 @@ void Application::initWindow() {
     glfwSetKeyCallback(m_window, keyCallback);
 }
 
-void Application::framebufferResizeCallback(GLFWwindow* window, int  , int  ) {
+void Application::framebufferResizeCallback(GLFWwindow* window, int, int) {
     auto app = reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
-    if (app && app->m_renderer) {
-        app->m_renderer->onWindowResize(window);
+    if (app && app->m_device) {
+        app->m_device->onResize(window);
         app->m_camera->setAspectRatio(app->m_renderer->getAspectRatio());
     }
 }
@@ -80,6 +87,10 @@ void Application::mouseButtonCallback(GLFWwindow* window, int, int action, int) 
     auto app = reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
     if (!app) return;
 
+    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse && !app->m_camera->isMouseCaptured()) {
+        return;
+    }
+
     if (action == GLFW_PRESS) {
         if (!app->m_camera->isMouseCaptured()) {
             app->m_camera->setMouseCaptured(true);
@@ -88,11 +99,15 @@ void Application::mouseButtonCallback(GLFWwindow* window, int, int action, int) 
     }
 }
 
-void Application::keyCallback(GLFWwindow* window, int key, int  , int action, int  ) {
+void Application::keyCallback(GLFWwindow* window, int key, int, int action, int) {
     if (action != GLFW_PRESS) return;
 
     auto app = reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
     if (!app) return;
+
+    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput) {
+        return;
+    }
 
     bool needsRegen = false;
 
@@ -108,33 +123,32 @@ void Application::keyCallback(GLFWwindow* window, int key, int  , int action, in
         app->m_camera->setMouseCaptured(captured);
         glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
     } else if (key == GLFW_KEY_H) {
-        app->m_showHUD = !app->m_showHUD;
+        app->m_hudInfo.showHUD = !app->m_hudInfo.showHUD;
     } else if (key == GLFW_KEY_R) {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
+        static std::mt19937 gen(std::random_device{}());
         std::uniform_int_distribution<uint32_t> dis(1, 999999);
         app->m_config.seed = dis(gen);
-        app->m_currentPreset = "Custom (Random)";
+        app->m_hudInfo.presetName = "Custom (Random)";
         needsRegen = true;
     } else if (key == GLFW_KEY_1) {
         app->m_config.applyMountains();
-        app->m_currentPreset = "Mountains";
+        app->m_hudInfo.presetName = "Mountains";
         needsRegen = true;
     } else if (key == GLFW_KEY_2) {
         app->m_config.applyHills();
-        app->m_currentPreset = "Rolling Hills";
+        app->m_hudInfo.presetName = "Rolling Hills";
         needsRegen = true;
     } else if (key == GLFW_KEY_3) {
         app->m_config.applyCanyons();
-        app->m_currentPreset = "Deep Canyons";
+        app->m_hudInfo.presetName = "Deep Canyons";
         needsRegen = true;
     } else if (key == GLFW_KEY_4) {
         app->m_config.applyIslands();
-        app->m_currentPreset = "Tropical Islands";
+        app->m_hudInfo.presetName = "Tropical Islands";
         needsRegen = true;
     } else if (key == GLFW_KEY_5) {
         app->m_config.applyMultiBiome();
-        app->m_currentPreset = "Multi-Biome World";
+        app->m_hudInfo.presetName = "Multi-Biome World";
         needsRegen = true;
     } else if (key == GLFW_KEY_T) {
         app->m_config.toggleTimeCycle();
@@ -156,19 +170,19 @@ void Application::keyCallback(GLFWwindow* window, int key, int  , int action, in
         needsRegen = true;
     } else if (key == GLFW_KEY_Z) {
         app->m_config.amplitude = std::max(5.0f, app->m_config.amplitude - 5.0f);
-        app->m_currentPreset = "Custom";
+        app->m_hudInfo.presetName = "Custom";
         needsRegen = true;
     } else if (key == GLFW_KEY_X) {
         app->m_config.amplitude += 5.0f;
-        app->m_currentPreset = "Custom";
+        app->m_hudInfo.presetName = "Custom";
         needsRegen = true;
     } else if (key == GLFW_KEY_C) {
         app->m_config.frequency = std::max(0.2f, app->m_config.frequency - 0.2f);
-        app->m_currentPreset = "Custom";
+        app->m_hudInfo.presetName = "Custom";
         needsRegen = true;
     } else if (key == GLFW_KEY_V) {
         app->m_config.frequency += 0.2f;
-        app->m_currentPreset = "Custom";
+        app->m_hudInfo.presetName = "Custom";
         needsRegen = true;
     } else if (key == GLFW_KEY_L) {
         app->m_config.cycleLODMode();
@@ -184,10 +198,10 @@ void Application::keyCallback(GLFWwindow* window, int key, int  , int action, in
         app->m_config.increaseWaveAmplitude();
     } else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_COMMA) {
         app->m_config.decreaseViewDistance();
-        app->m_chunkManager->setRadius(*app->m_context, app->m_config.viewRadius, app->m_config);
+        app->m_chunkManager->setRadius(*app->m_device, app->m_config.viewRadius, app->m_config);
     } else if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_PERIOD) {
         app->m_config.increaseViewDistance();
-        app->m_chunkManager->setRadius(*app->m_context, app->m_config.viewRadius, app->m_config);
+        app->m_chunkManager->setRadius(*app->m_device, app->m_config.viewRadius, app->m_config);
     } else if (key == GLFW_KEY_M) {
         int currentMode = static_cast<int>(app->m_config.debugMode);
         currentMode = (currentMode + 1) % 4;
@@ -197,7 +211,7 @@ void Application::keyCallback(GLFWwindow* window, int key, int  , int action, in
     }
 
     if (needsRegen) {
-        app->m_chunkManager->regenerateAll(*app->m_context, app->m_config);
+        app->m_chunkManager->regenerateAll(*app->m_device, app->m_config);
     }
 }
 
@@ -222,25 +236,68 @@ void Application::run() {
         glfwPollEvents();
 
         m_camera->update(deltaTime, m_window);
+        m_chunkManager->update(*m_device, m_camera->getPosition(), m_config);
 
-        m_chunkManager->update(*m_context, m_camera->getPosition(), m_config);
-
-        HUDInfo hudInfo{};
-        hudInfo.fps = m_currentFPS;
-        hudInfo.activeChunks = m_chunkManager->getChunkCount();
-        hudInfo.showHUD = m_showHUD;
-        hudInfo.mouseCaptured = m_camera->isMouseCaptured();
-        hudInfo.presetName = m_currentPreset;
+        m_hudInfo.fps = m_currentFPS;
+        m_hudInfo.activeChunks = m_chunkManager->getChunkCount();
+        m_hudInfo.mouseCaptured = m_camera->isMouseCaptured();
 
         m_renderer->renderFrame(
             m_window,
             *m_camera,
             *m_chunkManager,
             m_config,
-            hudInfo,
+            m_hudInfo,
             currentTime
         );
     }
 
-    m_context->waitIdle();
+    m_device->waitIdle();
+}
+
+int Application::runSmokeTest(int numFrames) {
+    using clock = std::chrono::high_resolution_clock;
+    double totalCpuMs = 0.0;
+    int rendered = 0;
+
+    for (int i = 0; i < numFrames + 3 && rendered < numFrames; ++i) {
+        glfwPollEvents();
+        auto t0 = clock::now();
+
+        m_config.advanceTime(0.016f);
+        m_chunkManager->update(*m_device, m_camera->getPosition(), m_config);
+        m_hudInfo.fps = 60.0f;
+        m_hudInfo.activeChunks = m_chunkManager->getChunkCount();
+        m_hudInfo.mouseCaptured = false;
+
+        bool ok = m_renderer->renderFrame(
+            m_window,
+            *m_camera,
+            *m_chunkManager,
+            m_config,
+            m_hudInfo,
+            static_cast<float>(i) * 0.016f
+        );
+
+        auto t1 = clock::now();
+        if (ok) {
+            totalCpuMs += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            rendered++;
+        }
+    }
+
+    m_device->waitIdle();
+
+    double avgCpuMs = rendered > 0 ? totalCpuMs / rendered : 0.0;
+    std::cout << "[SmokeTest] Backend=" << m_device->getBackendName()
+              << " | GPU=\"" << m_device->getDeviceName() << "\""
+              << " | HardwareRT=" << (m_device->supportsHardwareRayTracing() ? "YES" : "NO")
+              << " | Resolution=" << m_device->getSwapchainWidth() << "x" << m_device->getSwapchainHeight()
+              << " | Chunks=" << m_chunkManager->getChunkCount()
+              << " | Frames=" << rendered
+              << " | AvgCPU=" << std::fixed << std::setprecision(2) << avgCpuMs << "ms"
+              << " | LastGPU=" << m_device->getLastGpuFrameTimeMs() << "ms"
+              << std::endl;
+
+    return (rendered > 0) ? 0 : 1;
 }
