@@ -69,3 +69,4 @@ void main() {
 
     imageStore(outDstTex, gid, vec4(max(result, vec3(0.0)), 1.0));
 }
+

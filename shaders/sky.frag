@@ -96,7 +96,8 @@ void main() {
     vec3 stormTint = mix(vec3(0.06, 0.07, 0.09), vec3(0.28, 0.30, 0.34), dayFactor);
     skyColor = mix(skyColor, stormTint, stormDim * 0.65);
 
-    float cosElev = sign(cos((time - 6.0) / 12.0 * 3.14159)) * sqrt(max(0.0, 1.0 - sinElev * sinElev));
+    float sunAngle = ((ubo.cameraPos.w - 6.0) / 12.0) * PI;
+    float cosElev = cos(sunAngle);
     vec3 trueSunDir = normalize(vec3(cosElev * 0.80, sinElev, 0.35));
     vec3 trueMoonDir = normalize(vec3(-cosElev * 0.80, -sinElev, -0.35));
 

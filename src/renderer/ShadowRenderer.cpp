@@ -143,7 +143,6 @@ void ShadowRenderer::renderShadows(
     const rhi::RHIBuffer& globalUBO,
     ChunkManager& chunkManager,
     FoliageRenderer& foliageRenderer,
-    StructureRenderer& structureRenderer,
     uint32_t frameIndex,
     const TerrainConfig& config
 ) {
@@ -174,10 +173,6 @@ void ShadowRenderer::renderShadows(
             cmd.bindGraphicsPipeline(*m_foliageShadowPipeline);
             cmd.bindUniformBuffer(0, globalUBO);
             foliageRenderer.recordShadowCommands(cmd, frameIndex, c);
-        }
-
-        if (config.showStructures && !config.wireframe && c < 3) {
-            structureRenderer.recordShadowCommands(cmd, globalUBO, frameIndex, c);
         }
     }
 

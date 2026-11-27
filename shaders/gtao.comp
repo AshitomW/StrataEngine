@@ -97,3 +97,4 @@ void main() {
     float ao = clamp(1.0 - (occlusion / float(NUM_DIRS)) * 1.45, 0.15, 1.0);
     imageStore(outAoRaw, gid, vec4(ao));
 }
+

@@ -19,3 +19,4 @@ public:
 private:
     std::unique_ptr<rhi::RHIPipeline> m_pipeline;
 };
+

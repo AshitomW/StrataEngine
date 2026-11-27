@@ -47,3 +47,4 @@ private:
     std::unique_ptr<rhi::RHISampler> m_pointSampler;
     std::unique_ptr<rhi::RHISampler> m_linearSampler;
 };
+

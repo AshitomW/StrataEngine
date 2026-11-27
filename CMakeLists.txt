@@ -57,9 +57,6 @@ set(SHADERS
     precipitation.frag
     shadow_terrain.vert
     shadow_foliage.vert
-    shadow_structure.vert
-    structure.vert
-    structure.frag
     terrain.comp
     terrain.vert
     terrain.frag
@@ -87,18 +84,20 @@ foreach(SHADER ${SHADERS})
 
     if(ENABLE_METAL)
         set(MSL_FILE ${SHADER_BIN}/${SHADER}.metal)
+        set(MAP_FILE ${SHADER_BIN}/${SHADER}.metal.map)
         if(SHADER MATCHES "\\.vert$")
             set(MSL_EXTRA_FLAGS --flip-vert-y)
         else()
             set(MSL_EXTRA_FLAGS "")
         endif()
         add_custom_command(
-            OUTPUT ${MSL_FILE}
+            OUTPUT ${MSL_FILE} ${MAP_FILE}
             COMMAND ${SPIRV_CROSS} ${SPV_FILE} --msl --msl-version 30000 ${MSL_EXTRA_FLAGS} --output ${MSL_FILE}
-            DEPENDS ${SPV_FILE}
-            COMMENT "Cross-compiling ${SHADER}.spv -> MSL"
+            COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_metal_map.py ${SPIRV_CROSS} ${SPV_FILE} ${MAP_FILE}
+            DEPENDS ${SPV_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_metal_map.py
+            COMMENT "Cross-compiling ${SHADER}.spv -> MSL + binding map"
         )
-        list(APPEND SHADER_OUTPUTS ${MSL_FILE})
+        list(APPEND SHADER_OUTPUTS ${MSL_FILE} ${MAP_FILE})
     endif()
 endforeach()
 add_custom_target(shaders ALL DEPENDS ${SHADER_OUTPUTS})
@@ -145,7 +144,6 @@ set(ENGINE_SOURCES
     src/renderer/Renderer.cpp
     src/renderer/ShadowRenderer.cpp
     src/renderer/SkyRenderer.cpp
-    src/renderer/StructureRenderer.cpp
     src/renderer/VolumetricRenderer.cpp
     src/renderer/WaterRenderer.cpp
     src/renderer/WeatherSystem.cpp

@@ -22,3 +22,4 @@ private:
     float m_nextLightningTime = 4.0f;
     float m_flashDecay = 0.0f;
 };
+

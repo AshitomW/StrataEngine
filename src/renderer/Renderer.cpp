@@ -34,7 +34,6 @@ Renderer::Renderer(rhi::RHIDevice& device, GLFWwindow* window)
     m_materialLibrary = std::make_unique<MaterialLibrary>(device);
     m_gtaoRenderer = std::make_unique<GTAORenderer>(device);
     m_foliageRenderer = std::make_unique<FoliageRenderer>(device);
-    m_structureRenderer = std::make_unique<StructureRenderer>(device);
     m_precipitationRenderer = std::make_unique<PrecipitationRenderer>(device);
     m_weatherSystem = std::make_unique<WeatherSystem>();
     m_skyRenderer = std::make_unique<SkyRenderer>(device);
@@ -211,7 +210,7 @@ void Renderer::updateUBO(uint32_t frameIndex, const Camera& camera, const Terrai
     ubo.viewProj = camera.getViewProjMatrix();
     ubo.view = camera.getViewMatrix();
     ubo.proj = camera.getProjMatrix();
-    ubo.cameraPos = glm::vec4(camera.getPosition(), 1.0f);
+    ubo.cameraPos = glm::vec4(camera.getPosition(), config.timeOfDay);
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
     m_shadowRenderer->updateCascades(camera, sky.activeLightDir);
@@ -344,15 +343,23 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
         bool needsRegen = false;
 
         if (ImGui::CollapsingHeader("Terrain & LOD", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* presetItems[] = {"Mountains", "Rolling Hills", "Deep Canyons", "Tropical Islands", "Multi-Biome World"};
-            int presetIdx = static_cast<int>(std::min(config.presetType, 4u));
-            if (ImGui::Combo("Preset [1-5]", &presetIdx, presetItems, IM_ARRAYSIZE(presetItems))) {
+            const char* presetItems[] = {
+                "Mountains", "Rolling Hills", "Deep Canyons", "Tropical Islands",
+                "Multi-Biome World", "Volcanic Caldera", "Arctic Tundra",
+                "Golden Desert Dunes", "Savanna & Badlands"
+            };
+            int presetIdx = static_cast<int>(std::min(config.presetType, 8u));
+            if (ImGui::Combo("Preset [1-9]", &presetIdx, presetItems, IM_ARRAYSIZE(presetItems))) {
                 switch (presetIdx) {
                     case 0: config.applyMountains(); hudInfo.presetName = "Mountains"; break;
                     case 1: config.applyHills(); hudInfo.presetName = "Rolling Hills"; break;
                     case 2: config.applyCanyons(); hudInfo.presetName = "Deep Canyons"; break;
                     case 3: config.applyIslands(); hudInfo.presetName = "Tropical Islands"; break;
                     case 4: config.applyMultiBiome(); hudInfo.presetName = "Multi-Biome World"; break;
+                    case 5: config.applyVolcanic(); hudInfo.presetName = "Volcanic Caldera"; break;
+                    case 6: config.applyTundra(); hudInfo.presetName = "Arctic Tundra"; break;
+                    case 7: config.applyDesert(); hudInfo.presetName = "Golden Desert"; break;
+                    case 8: config.applySavanna(); hudInfo.presetName = "Savanna & Badlands"; break;
                 }
                 needsRegen = true;
             }
@@ -463,10 +470,6 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
             ImGui::Separator();
             ImGui::Checkbox("Show Foliage [E]", &config.showFoliage);
             ImGui::SliderFloat("Foliage Density [U/I]", &config.foliageDensity, 0.0f, EngineConstants::Environment::MAX_FOLIAGE_DENSITY, "%.2f");
-
-            ImGui::Separator();
-            ImGui::Checkbox("Procedural Structures", &config.showStructures);
-            ImGui::SliderFloat("Structure Density", &config.structureDensity, 0.0f, 2.5f, "%.2f");
         }
 
         if (ImGui::CollapsingHeader("Tracing, Volumetrics & Optimization", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -522,19 +525,16 @@ bool Renderer::renderFrame(
     key.presetType = config.presetType;
     key.waterHeight = config.waterHeight;
     key.foliageDensity = config.foliageDensity;
+    key.amplitude = config.amplitude;
+    key.frequency = config.frequency;
+    key.warpStrength = config.warpStrength;
+    key.mountainPower = config.mountainPower;
 
     if (!(key == m_lastFoliageKey)) {
         m_lastFoliageKey = key;
-        m_foliageRenderer->updateInstances(m_device, chunkManager.getChunkOrigins(), config);
+        m_foliageRenderer->updateInstances(chunkManager.getChunkOrigins(), config);
     }
-
-    FoliageKey structKey = key;
-    structKey.showFoliage = config.showStructures;
-    structKey.foliageDensity = config.structureDensity;
-    if (!(structKey == m_lastStructureKey)) {
-        m_lastStructureKey = structKey;
-        m_structureRenderer->updateInstances(m_device, chunkManager.getChunkOrigins(), config);
-    }
+    m_foliageRenderer->ensureFrameBuffersUploaded(m_device, frameIndex);
 
     m_device.beginImGuiFrame();
     drawImGui(camera, chunkManager, config, hudInfo);
@@ -555,8 +555,8 @@ bool Renderer::renderFrame(
     );
     m_waterRenderer->updateSimulation(*cmd, camera, config, time);
 
-    // 2. 4-Cascade Shadow Atlas (Terrain + Foliage + Structures)
-    m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, *m_structureRenderer, frameIndex, config);
+    // 2. 4-Cascade Shadow Atlas (Terrain + Foliage)
+    m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, frameIndex, config);
 
     // 3. Offscreen Linear HDR Render Pass A (Opaque: Sky, Terrain, Foliage)
     rhi::RenderPassDesc hdrPass{};
@@ -603,10 +603,6 @@ bool Renderer::renderFrame(
 
     if (config.showFoliage && !config.wireframe) {
         m_foliageRenderer->recordRenderCommands(frame);
-    }
-
-    if (config.showStructures && !config.wireframe) {
-        m_structureRenderer->recordRenderCommands(frame);
     }
 
     cmd->endRenderPass();

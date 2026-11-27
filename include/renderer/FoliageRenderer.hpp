@@ -4,6 +4,7 @@
 #include "renderer/FrameContext.hpp"
 #include <array>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <glm/glm.hpp>
 
@@ -34,10 +35,10 @@ public:
     FoliageRenderer& operator=(const FoliageRenderer&) = delete;
 
     void updateInstances(
-        rhi::RHIDevice& device,
         const std::vector<glm::vec2>& chunkOrigins,
         const TerrainConfig& config
     );
+    void ensureFrameBuffersUploaded(rhi::RHIDevice& device, uint32_t frameIndex);
 
     void recordRenderCommands(const FrameContext& frame);
     void recordShadowCommands(rhi::RHICommandList& cmd, uint32_t frameIndex, uint32_t cascadeIndex);
@@ -61,8 +62,31 @@ private:
 
     std::vector<ModelMesh> m_modelMeshes;
 
-    static constexpr size_t NUM_MODELS = 7;
+    static constexpr size_t NUM_MODELS = 8;
+
+    struct ScatterKey {
+        uint32_t seed = 0;
+        uint32_t presetType = 9999;
+        float waterHeight = -9999.0f;
+        float foliageDensity = -1.0f;
+        bool showFoliage = true;
+        float amplitude = -1.0f;
+        float frequency = -1.0f;
+        float warpStrength = -1.0f;
+        float mountainPower = -1.0f;
+
+        bool operator==(const ScatterKey& o) const {
+            return seed == o.seed && presetType == o.presetType && waterHeight == o.waterHeight &&
+                foliageDensity == o.foliageDensity && showFoliage == o.showFoliage &&
+                amplitude == o.amplitude && frequency == o.frequency &&
+                warpStrength == o.warpStrength && mountainPower == o.mountainPower;
+        }
+    };
+
+    ScatterKey m_cachedScatterKey{};
+    std::unordered_map<uint64_t, std::vector<FoliageInstance>> m_chunkCache;
     std::vector<std::vector<FoliageInstance>> m_instancesByType;
     std::array<std::array<std::unique_ptr<rhi::RHIBuffer>, MAX_FRAMES_IN_FLIGHT>, NUM_MODELS> m_instanceBuffers;
     std::array<uint32_t, NUM_MODELS> m_instanceCounts{};
+    std::array<bool, MAX_FRAMES_IN_FLIGHT> m_frameBufferDirty{false, false};
 };

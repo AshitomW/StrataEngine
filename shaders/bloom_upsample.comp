@@ -37,3 +37,4 @@ void main() {
     vec3 combined = base * pc.params.z + s * pc.params.y;
     imageStore(outUpsampled, gid, vec4(max(combined, vec3(0.0)), 1.0));
 }
+

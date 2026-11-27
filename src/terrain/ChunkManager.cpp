@@ -46,13 +46,19 @@ void ChunkManager::createLODIndexBuffers(rhi::RHIDevice& device) {
 }
 
 void ChunkManager::rebuildChunks(rhi::RHIDevice& device) {
+    int dim = 2 * m_radius + 1;
     m_chunks.clear();
-    m_chunks.reserve((2 * m_radius + 1) * (2 * m_radius + 1));
-
+    m_chunks.reserve(static_cast<size_t>(dim * dim));
+    std::vector<std::pair<int, int>> slotCoords(static_cast<size_t>(dim * dim));
     for (int dz = -m_radius; dz <= m_radius; ++dz) {
         for (int dx = -m_radius; dx <= m_radius; ++dx) {
-            m_chunks.emplace_back(device, m_centerChunkX + dx, m_centerChunkZ + dz);
+            int cx = m_centerChunkX + dx;
+            int cz = m_centerChunkZ + dz;
+            slotCoords[toroidalIndex(cx, cz, dim)] = {cx, cz};
         }
+    }
+    for (const auto& [cx, cz] : slotCoords) {
+        m_chunks.emplace_back(device, cx, cz);
     }
 
     refreshChunkOrigins();
@@ -88,11 +94,12 @@ void ChunkManager::updateCoordsAndLOD(const glm::vec3& cameraPos, const TerrainC
     m_centerChunkZ = targetCenterZ;
 
     if (centerShifted) {
-        size_t idx = 0;
+        int dim = 2 * m_radius + 1;
         for (int dz = -m_radius; dz <= m_radius; ++dz) {
             for (int dx = -m_radius; dx <= m_radius; ++dx) {
-                m_chunks[idx].setCoord(m_centerChunkX + dx, m_centerChunkZ + dz);
-                idx++;
+                int cx = m_centerChunkX + dx;
+                int cz = m_centerChunkZ + dz;
+                m_chunks[toroidalIndex(cx, cz, dim)].setCoord(cx, cz);
             }
         }
         refreshChunkOrigins();
@@ -104,6 +111,12 @@ void ChunkManager::updateCoordsAndLOD(const glm::vec3& cameraPos, const TerrainC
         if (chunk.needsRegeneration()) {
             m_dirtyChunks.push_back(&chunk);
         }
+    }
+
+    if (m_dirtyChunks.size() > 1) {
+        std::sort(m_dirtyChunks.begin(), m_dirtyChunks.end(), [&](const TerrainChunk* a, const TerrainChunk* b) {
+            return a->getDistanceTo(cameraPos) < b->getDistanceTo(cameraPos);
+        });
     }
 }
 

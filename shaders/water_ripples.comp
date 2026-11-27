@@ -73,3 +73,4 @@ void main() {
     float dZ = (hU - hD) * 0.5;
     imageStore(outCurrRipples, gid, vec4(hNext, vel, dX, dZ));
 }
+

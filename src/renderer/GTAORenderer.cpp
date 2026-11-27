@@ -85,3 +85,4 @@ void GTAORenderer::compute(
     cmd.dispatch((m_halfWidth + 7) / 8, (m_halfHeight + 7) / 8, 1);
     cmd.textureBarrier(*m_aoBlur, rhi::TextureLayout::General, rhi::TextureLayout::ShaderReadOnly);
 }
+

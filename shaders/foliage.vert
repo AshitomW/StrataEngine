@@ -31,6 +31,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
 layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec3 outColor;
+layout(location = 3) out vec3 outLocalPos;
+layout(location = 4) flat out uint outObjType;
 
 void main() {
     float scale = inInstancePos.w;
@@ -63,6 +65,8 @@ void main() {
     outWorldPos = worldPos;
     outNormal = normalize(localNormal);
     outColor = inColor * (1.0 + colorVar * 0.20);
+    outLocalPos = inPosition;
+    outObjType = objType;
 
     gl_Position = ubo.viewProj * vec4(worldPos, 1.0);
 }

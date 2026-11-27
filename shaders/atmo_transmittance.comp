@@ -62,3 +62,4 @@ void main() {
     vec3 transmittance = exp(-opticalDepth);
     imageStore(outTransmittance, gid, vec4(transmittance, 1.0));
 }
+

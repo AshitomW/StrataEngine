@@ -3,6 +3,8 @@
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inColor;
+layout(location = 3) in vec3 inLocalPos;
+layout(location = 4) flat in uint inObjType;
 
 layout(location = 0) out vec4 outColor;
 
@@ -30,6 +32,24 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
 layout(set = 2, binding = 0) uniform sampler2D uShadowAtlas;
 
 const float PI = 3.14159265359;
+
+float hash31F(vec3 p) {
+    p = fract(p * vec3(443.897, 441.423, 437.195));
+    p += dot(p, p.yzx + 19.19);
+    return fract((p.x + p.y) * p.z);
+}
+
+float noise3D(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    float n000 = hash31F(i + vec3(0,0,0)), n100 = hash31F(i + vec3(1,0,0));
+    float n010 = hash31F(i + vec3(0,1,0)), n110 = hash31F(i + vec3(1,1,0));
+    float n001 = hash31F(i + vec3(0,0,1)), n101 = hash31F(i + vec3(1,0,1));
+    float n011 = hash31F(i + vec3(0,1,1)), n111 = hash31F(i + vec3(1,1,1));
+    return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+               mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
+}
 
 float sampleShadow(vec3 worldPos, vec3 N, vec3 L, float viewDepth) {
     float strength = ubo.shadowParams.x;
@@ -102,7 +122,39 @@ void main() {
     vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.42 * ubo.skyColorZenith.a;
     vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5) * iblStrength;
 
-    vec3 litColor = inColor * (ambient + directLight);
+    vec3 albedo = inColor;
+    bool isRock = (inObjType == 4u || inObjType == 5u);
+    bool isBark = (!isRock && inColor.r > inColor.g * 1.15 && inColor.b < inColor.g);
+
+    if (isRock) {
+        float rockMacro = noise3D(inWorldPos * 0.75);
+        float rockMicro = noise3D(inLocalPos * 5.2 + inWorldPos * 0.1);
+        float lichen = smoothstep(0.62, 0.85, rockMicro) * smoothstep(0.35, 0.75, N.y);
+        albedo *= mix(0.68, 1.28, rockMacro * 0.6 + rockMicro * 0.4);
+        albedo = mix(albedo, vec3(0.18, 0.22, 0.11), lichen * (inObjType == 4u ? 0.45 : 0.15));
+        N = normalize(N + vec3(rockMicro - 0.5, 0.0, rockMacro - 0.5) * 0.35);
+    } else if (isBark) {
+        float ang = atan(inLocalPos.z, inLocalPos.x);
+        float ridge = sin(ang * 9.0 + noise3D(inLocalPos * 4.0) * 2.5) * 0.5 + 0.5;
+        float knots = noise3D(vec3(ang * 2.0, inLocalPos.y * 3.5, inWorldPos.x * 0.1));
+        albedo *= mix(0.58, 1.18, ridge * 0.65 + knots * 0.35);
+        N = normalize(N + vec3(cos(ang), 0.0, sin(ang)) * ((ridge - 0.5) * 0.42));
+    } else if (inObjType == 3u) {
+        float ang = atan(inLocalPos.z, inLocalPos.x);
+        float rib = cos(ang * 8.0) * 0.5 + 0.5;
+        float speck = noise3D(inLocalPos * 7.0);
+        albedo *= mix(0.72, 1.24, rib);
+        albedo = mix(albedo, vec3(0.55, 0.52, 0.38), smoothstep(0.78, 0.92, speck) * 0.35);
+        N = normalize(N + vec3(cos(ang), 0.0, sin(ang)) * ((rib - 0.5) * 0.45));
+    } else {
+        float cluster = noise3D(inLocalPos * 3.8 + vec3(0.0, inLocalPos.y * 1.2, 0.0));
+        float fineLeaf = noise3D(inLocalPos * 10.5);
+        float crownAO = smoothstep(-0.2, 1.0, N.y) * 0.45 + 0.55;
+        albedo *= mix(0.65, 1.32, cluster * 0.6 + fineLeaf * 0.4) * crownAO;
+        N = normalize(N + vec3(fineLeaf - 0.5, (cluster - 0.5) * 0.5, fineLeaf - 0.5) * 0.32);
+    }
+
+    vec3 litColor = albedo * (ambient + directLight);
 
     float waterHeight = ubo.terrainParams.x;
     float heightHaze = exp(-max(inWorldPos.y - waterHeight, 0.0) * 0.035) * 0.22;

@@ -13,12 +13,15 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_metal.h"
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 namespace rhi {
@@ -48,6 +51,34 @@ std::string readMetalShaderSource(const std::string& baseName) {
     }
 
     throw std::runtime_error("Failed to open Metal shader file: " + filename);
+}
+
+std::unordered_map<std::string, uint32_t> readMetalBindingMap(const std::string& baseName) {
+    if (baseName.empty()) return {};
+    const std::string filename = "shaders/" + baseName + ".metal.map";
+    const std::vector<std::filesystem::path> searchPaths = {
+        filename,
+        std::filesystem::path("build") / filename,
+        std::filesystem::path("..") / filename,
+        std::filesystem::path("../build") / filename,
+        baseName + ".metal.map",
+        std::filesystem::path("build/shaders") / (baseName + ".metal.map")
+    };
+
+    for (const auto& path : searchPaths) {
+        std::ifstream file(path);
+        if (file.is_open()) {
+            std::unordered_map<std::string, uint32_t> result;
+            std::string name;
+            uint32_t binding = 0;
+            while (file >> name >> binding) {
+                result[name] = binding;
+            }
+            return result;
+        }
+    }
+
+    throw std::runtime_error("Failed to open Metal binding map: " + filename);
 }
 
 MTLPixelFormat toMTLPixelFormat(Format fmt) {
@@ -223,6 +254,17 @@ private:
 
 class MetalRHIPipeline final : public RHIPipeline {
 public:
+    static constexpr size_t MAX_TEX_SLOTS = 12;
+
+    MetalRHIPipeline() {
+        vertTexSlot.fill(-1);
+        vertSampSlot.fill(-1);
+        fragTexSlot.fill(-1);
+        fragSampSlot.fill(-1);
+        compTexSlot.fill(-1);
+        compSampSlot.fill(-1);
+    }
+
     bool isValid() const override {
         return isCompute ? (computeState != nil) : (renderState != nil);
     }
@@ -241,6 +283,10 @@ public:
     int32_t fragSsboSlot = -1;
     int32_t vertPcSlot = -1;
     int32_t fragPcSlot = -1;
+    std::array<int32_t, MAX_TEX_SLOTS> vertTexSlot{};
+    std::array<int32_t, MAX_TEX_SLOTS> vertSampSlot{};
+    std::array<int32_t, MAX_TEX_SLOTS> fragTexSlot{};
+    std::array<int32_t, MAX_TEX_SLOTS> fragSampSlot{};
 
     id<MTLComputePipelineState> computeState = nil;
     uint32_t localSizeX = 16;
@@ -249,7 +295,8 @@ public:
     int32_t compUboSlot = -1;
     int32_t compSsboSlot = -1;
     int32_t compPcSlot = -1;
-    uint32_t numStorageBuffers = 0;
+    std::array<int32_t, MAX_TEX_SLOTS> compTexSlot{};
+    std::array<int32_t, MAX_TEX_SLOTS> compSampSlot{};
 };
 
 class MetalRHICommandList final : public RHICommandList {
@@ -389,29 +436,35 @@ public:
     }
 
     void bindTexture(uint32_t slot, const RHITexture& texture, const RHISampler& sampler) override {
+        if (!m_currentPipeline || slot >= MetalRHIPipeline::MAX_TEX_SLOTS) return;
         const auto& mtlTex = static_cast<const MetalRHITexture&>(texture);
         const auto& mtlSamp = static_cast<const MetalRHISampler&>(sampler);
-        if (m_currentPipeline && m_currentPipeline->isCompute) {
+        if (m_currentPipeline->isCompute) {
             if (m_computeEncoder) {
-                uint32_t texSlot = (slot >= m_currentPipeline->numStorageBuffers) ? (slot - m_currentPipeline->numStorageBuffers) : slot;
-                [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(texSlot)];
-                [m_computeEncoder setSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(texSlot)];
+                int32_t ts = m_currentPipeline->compTexSlot[slot];
+                int32_t ss = m_currentPipeline->compSampSlot[slot];
+                if (ts >= 0) [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(ts)];
+                if (ss >= 0) [m_computeEncoder setSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(ss)];
             }
         } else if (m_renderEncoder) {
-            [m_renderEncoder setVertexTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
-            [m_renderEncoder setVertexSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
-            [m_renderEncoder setFragmentTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
-            [m_renderEncoder setFragmentSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
+            int32_t vts = m_currentPipeline->vertTexSlot[slot];
+            int32_t vss = m_currentPipeline->vertSampSlot[slot];
+            if (vts >= 0) [m_renderEncoder setVertexTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(vts)];
+            if (vss >= 0) [m_renderEncoder setVertexSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(vss)];
+            int32_t fts = m_currentPipeline->fragTexSlot[slot];
+            int32_t fss = m_currentPipeline->fragSampSlot[slot];
+            if (fts >= 0) [m_renderEncoder setFragmentTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(fts)];
+            if (fss >= 0) [m_renderEncoder setFragmentSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(fss)];
         }
     }
 
     void bindStorageTexture(uint32_t slot, const RHITexture& texture) override {
-        if (!m_computeEncoder) return;
+        if (!m_computeEncoder || !m_currentPipeline || slot >= MetalRHIPipeline::MAX_TEX_SLOTS) return;
         const auto& mtlTex = static_cast<const MetalRHITexture&>(texture);
-        uint32_t texSlot = (m_currentPipeline && slot >= m_currentPipeline->numStorageBuffers)
-            ? (slot - m_currentPipeline->numStorageBuffers)
-            : slot;
-        [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(texSlot)];
+        int32_t ts = m_currentPipeline->compTexSlot[slot];
+        if (ts >= 0) {
+            [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(ts)];
+        }
     }
 
     void pushConstants(ShaderStage stages, const void* data, size_t size) override {
@@ -759,22 +812,48 @@ std::unique_ptr<RHIPipeline> MetalDevice::createGraphicsPipeline(const GraphicsP
         throw std::runtime_error("Failed to create Metal render pipeline: " + errMsg);
     }
 
-    auto parseBindings = [](NSArray<id<MTLBinding>>* bindings, int32_t& uboSlot, int32_t& ssboSlot, int32_t& pcSlot) {
+    auto vertTexMap = readMetalBindingMap(desc.vertexShader);
+    auto fragTexMap = (desc.hasColor && !desc.fragmentShader.empty()) ? readMetalBindingMap(desc.fragmentShader) : std::unordered_map<std::string, uint32_t>{};
+
+    auto parseBindings = [](NSArray<id<MTLBinding>>* bindings,
+                            const std::unordered_map<std::string, uint32_t>& texMap,
+                            int32_t& uboSlot,
+                            int32_t& ssboSlot,
+                            int32_t& pcSlot,
+                            std::array<int32_t, MetalRHIPipeline::MAX_TEX_SLOTS>& texSlots,
+                            std::array<int32_t, MetalRHIPipeline::MAX_TEX_SLOTS>& sampSlots) {
         for (id<MTLBinding> b in bindings) {
-            if (b.type != MTLBindingTypeBuffer || b.index >= 16) continue;
-            if ([b.name isEqualToString:@"ubo"]) {
-                uboSlot = static_cast<int32_t>(b.index);
-            } else if ([b.name isEqualToString:@"pc"]) {
-                pcSlot = static_cast<int32_t>(b.index);
-            } else if ([b.name isEqualToString:@"terrainSSBO"] || [b.name isEqualToString:@"terrainBuffer"]) {
-                ssboSlot = static_cast<int32_t>(b.index);
+            if (b.type == MTLBindingTypeBuffer && b.index < 16) {
+                if ([b.name isEqualToString:@"ubo"]) {
+                    uboSlot = static_cast<int32_t>(b.index);
+                } else if ([b.name isEqualToString:@"pc"]) {
+                    pcSlot = static_cast<int32_t>(b.index);
+                } else if ([b.name isEqualToString:@"terrainSSBO"] || [b.name isEqualToString:@"terrainBuffer"]) {
+                    ssboSlot = static_cast<int32_t>(b.index);
+                }
+            } else if (b.type == MTLBindingTypeTexture) {
+                std::string name = [b.name UTF8String];
+                auto it = texMap.find(name);
+                if (it != texMap.end() && it->second < MetalRHIPipeline::MAX_TEX_SLOTS) {
+                    texSlots[it->second] = static_cast<int32_t>(b.index);
+                }
+            } else if (b.type == MTLBindingTypeSampler) {
+                std::string name = [b.name UTF8String];
+                const std::string suffix = "Smplr";
+                if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                    name.erase(name.size() - suffix.size());
+                }
+                auto it = texMap.find(name);
+                if (it != texMap.end() && it->second < MetalRHIPipeline::MAX_TEX_SLOTS) {
+                    sampSlots[it->second] = static_cast<int32_t>(b.index);
+                }
             }
         }
     };
 
     if (@available(macOS 13.0, *)) {
-        parseBindings(reflection.vertexBindings, pipe->vertUboSlot, pipe->vertSsboSlot, pipe->vertPcSlot);
-        parseBindings(reflection.fragmentBindings, pipe->fragUboSlot, pipe->fragSsboSlot, pipe->fragPcSlot);
+        parseBindings(reflection.vertexBindings, vertTexMap, pipe->vertUboSlot, pipe->vertSsboSlot, pipe->vertPcSlot, pipe->vertTexSlot, pipe->vertSampSlot);
+        parseBindings(reflection.fragmentBindings, fragTexMap, pipe->fragUboSlot, pipe->fragSsboSlot, pipe->fragPcSlot, pipe->fragTexSlot, pipe->fragSampSlot);
     }
 
     MTLDepthStencilDescriptor* dsd = [[MTLDepthStencilDescriptor alloc] init];
@@ -791,7 +870,6 @@ std::unique_ptr<RHIPipeline> MetalDevice::createComputePipeline(const ComputePip
     pipe->localSizeX = desc.localSizeX;
     pipe->localSizeY = desc.localSizeY;
     pipe->localSizeZ = desc.localSizeZ;
-    pipe->numStorageBuffers = desc.numStorageBuffers;
 
     id<MTLLibrary> compLib = m_impl->getOrCompileLibrary(desc.computeShader);
     id<MTLFunction> func = [compLib newFunctionWithName:@"main0"];
@@ -813,15 +891,33 @@ std::unique_ptr<RHIPipeline> MetalDevice::createComputePipeline(const ComputePip
         throw std::runtime_error("Failed to create Metal compute pipeline: " + errMsg);
     }
 
+    auto compTexMap = readMetalBindingMap(desc.computeShader);
     if (@available(macOS 13.0, *)) {
         for (id<MTLBinding> b in reflection.bindings) {
-            if (b.type != MTLBindingTypeBuffer) continue;
-            if ([b.name isEqualToString:@"ubo"]) {
-                pipe->compUboSlot = static_cast<int32_t>(b.index);
-            } else if ([b.name isEqualToString:@"pc"]) {
-                pipe->compPcSlot = static_cast<int32_t>(b.index);
-            } else {
-                pipe->compSsboSlot = static_cast<int32_t>(b.index);
+            if (b.type == MTLBindingTypeBuffer) {
+                if ([b.name isEqualToString:@"ubo"]) {
+                    pipe->compUboSlot = static_cast<int32_t>(b.index);
+                } else if ([b.name isEqualToString:@"pc"]) {
+                    pipe->compPcSlot = static_cast<int32_t>(b.index);
+                } else {
+                    pipe->compSsboSlot = static_cast<int32_t>(b.index);
+                }
+            } else if (b.type == MTLBindingTypeTexture) {
+                std::string name = [b.name UTF8String];
+                auto it = compTexMap.find(name);
+                if (it != compTexMap.end() && it->second < MetalRHIPipeline::MAX_TEX_SLOTS) {
+                    pipe->compTexSlot[it->second] = static_cast<int32_t>(b.index);
+                }
+            } else if (b.type == MTLBindingTypeSampler) {
+                std::string name = [b.name UTF8String];
+                const std::string suffix = "Smplr";
+                if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                    name.erase(name.size() - suffix.size());
+                }
+                auto it = compTexMap.find(name);
+                if (it != compTexMap.end() && it->second < MetalRHIPipeline::MAX_TEX_SLOTS) {
+                    pipe->compSampSlot[it->second] = static_cast<int32_t>(b.index);
+                }
             }
         }
     }

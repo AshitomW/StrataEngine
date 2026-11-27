@@ -41,3 +41,4 @@ void main() {
     float blurred = (sumWeight > 1e-5) ? (sumAO / sumWeight) : texture(uAoRaw, uv).r;
     imageStore(outAoBlur, gid, vec4(blurred));
 }
+

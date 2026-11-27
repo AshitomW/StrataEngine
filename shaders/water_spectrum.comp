@@ -90,3 +90,4 @@ void main() {
     imageStore(outDispFoam, gid, vec4(disp, foam));
     imageStore(outNormalSlope, gid, vec4(normal, 1.0 - normal.y));
 }
+

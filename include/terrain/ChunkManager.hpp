@@ -47,6 +47,12 @@ private:
         return 1u << lod;
     }
 
+    static size_t toroidalIndex(int cx, int cz, int dim) {
+        int sx = ((cx % dim) + dim) % dim;
+        int sz = ((cz % dim) + dim) % dim;
+        return static_cast<size_t>(sz * dim + sx);
+    }
+
 private:
     int m_radius = 3;
     int m_centerChunkX = 0;

@@ -77,3 +77,4 @@ void WeatherSystem::update(TerrainConfig& config, float time, float dt) {
         config.lightningFlash = 0.0f;
     }
 }
+

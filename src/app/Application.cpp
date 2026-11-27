@@ -150,6 +150,22 @@ void Application::keyCallback(GLFWwindow* window, int key, int, int action, int)
         app->m_config.applyMultiBiome();
         app->m_hudInfo.presetName = "Multi-Biome World";
         needsRegen = true;
+    } else if (key == GLFW_KEY_6) {
+        app->m_config.applyVolcanic();
+        app->m_hudInfo.presetName = "Volcanic Caldera";
+        needsRegen = true;
+    } else if (key == GLFW_KEY_7) {
+        app->m_config.applyTundra();
+        app->m_hudInfo.presetName = "Arctic Tundra";
+        needsRegen = true;
+    } else if (key == GLFW_KEY_8) {
+        app->m_config.applyDesert();
+        app->m_hudInfo.presetName = "Golden Desert";
+        needsRegen = true;
+    } else if (key == GLFW_KEY_9) {
+        app->m_config.applySavanna();
+        app->m_hudInfo.presetName = "Savanna & Badlands";
+        needsRegen = true;
     } else if (key == GLFW_KEY_T) {
         app->m_config.toggleTimeCycle();
     } else if (key == GLFW_KEY_LEFT_BRACKET) {

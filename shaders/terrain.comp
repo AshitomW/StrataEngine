@@ -163,7 +163,7 @@ float evaluatePresetHeight(vec2 worldPos, uint presetType, float baseFreq, float
         float h = (terracedMesa * gorgeCarve + buttes) * 0.85 + 0.06;
         return h * amp;
 
-    } else {
+    } else if (presetType == 3u) {
 
         float iFreq = baseFreq * 2.6;
         vec2 p = worldPos * iFreq;
@@ -175,13 +175,59 @@ float evaluatePresetHeight(vec2 worldPos, uint presetType, float baseFreq, float
         vec2 warped = p + warpStrength * 0.55 * q;
 
         float oceanBase = fbm(warped * 0.45, seed + 10u, 4, 2.0, 0.5);
-        float islandPeak = pow(1.0 - abs(gradientNoise(warped * 1.25, seed + 60u)), 2.0);
+        float islandPeak = pow(max(0.0, 1.0 - abs(gradientNoise(warped * 1.25, seed + 60u))), 2.0);
         float volcanoCrater = abs(gradientNoise(warped * 2.5, seed + 70u)) * 0.25;
 
         float islandMask = smoothstep(-0.06, 0.35, oceanBase);
         float h = mix(-0.25, (islandPeak * 1.3 - volcanoCrater) * 1.25, islandMask);
 
         return h * amp;
+    } else if (presetType == 5u) {
+        float vFreq = baseFreq * 2.4;
+        vec2 p = worldPos * vFreq;
+        vec2 q = vec2(
+            fbm(p * 0.45, seed + 19u, 3, 2.0, 0.5),
+            fbm(p * 0.45 + vec2(4.7, 9.1), seed + 29u, 3, 2.0, 0.5)
+        );
+        vec2 warped = p + warpStrength * 0.85 * q;
+        float cone = pow(max(0.0, 1.0 - abs(gradientNoise(warped * 0.85, seed + 301u))), 2.2) * 1.65;
+        float ridges = (1.0 - abs(gradientNoise(warped * 2.1, seed + 302u))) * 0.45;
+        float caldera = smoothstep(-0.35, 0.25, fbm(warped * 0.40, seed + 303u, 3, 2.0, 0.5));
+        float h = mix(-0.12, (cone * mountainPower * 0.72 + ridges), caldera) - 0.04;
+        return h * amp;
+    } else if (presetType == 6u) {
+        float tFreq = baseFreq * 2.5;
+        vec2 p = worldPos * tFreq;
+        vec2 q = vec2(
+            fbm(p * 0.5, seed + 41u, 3, 2.0, 0.5),
+            fbm(p * 0.5 + vec2(8.1, 2.3), seed + 43u, 3, 2.0, 0.5)
+        );
+        vec2 warped = p + warpStrength * 0.65 * q;
+        float plateau = fbm(warped * 0.60, seed + 401u, 4, 2.0, 0.5) * 0.5 + 0.5;
+        float fjord = abs(gradientNoise(warped * 0.45, seed + 402u));
+        float fjordCut = smoothstep(0.05, 0.36, fjord);
+        float frostRidge = pow(max(0.0, 1.0 - abs(gradientNoise(warped * 1.4, seed + 403u))), 1.9) * 0.55;
+        float h = mix(-0.22, plateau * 0.58 + frostRidge * mountainPower * 0.45, fjordCut) + 0.04;
+        return h * amp;
+    } else if (presetType == 7u) {
+        float dFreq = baseFreq * 3.0;
+        vec2 p = worldPos * dFreq;
+        float warp = fbm(p * 0.45, seed + 501u, 3, 2.0, 0.5) * 1.6;
+        float dune1 = 1.0 - abs(sin((p.x * 1.15 + p.y * 0.35 + warp * warpStrength) * 2.2));
+        float dune2 = 1.0 - abs(sin((p.x * 0.65 - p.y * 0.85 + warp * 0.7) * 3.4));
+        float dunes = pow(max(0.0, dune1 * 0.70 + dune2 * 0.30), 1.35) * 0.62;
+        float outcrop = pow(max(0.0, gradientNoise(p * 0.75, seed + 502u)), 2.2) * 0.75;
+        return (dunes + outcrop + 0.05) * amp;
+    } else {
+        float sFreq = baseFreq * 2.8;
+        vec2 p = worldPos * sFreq;
+        vec2 q = vec2(gradientNoise(p * 0.4, seed + 601u), gradientNoise(p * 0.4 + vec2(2.9, 6.4), seed + 602u));
+        vec2 warped = p + warpStrength * 0.5 * q;
+        float plains = (fbm(warped * 0.55, seed + 603u, 3, 2.0, 0.5) * 0.5 + 0.5) * 0.35;
+        float kopjeRaw = gradientNoise(warped * 1.1, seed + 604u);
+        float kopje = smoothstep(0.28, 0.42, kopjeRaw) * 0.48 + smoothstep(0.42, 0.55, kopjeRaw) * 0.15;
+        float dryRiver = smoothstep(0.03, 0.22, abs(gradientNoise(warped * 0.30, seed + 605u)));
+        return (plains * dryRiver + kopje + 0.06) * amp;
     }
 }
 
@@ -193,7 +239,7 @@ float evaluateContinuousHeight(vec2 worldPos) {
     uint seed = pc.config.x;
     uint presetType = pc.config.z;
 
-    if (presetType < 4u) {
+    if (presetType != 4u) {
         return evaluatePresetHeight(worldPos, presetType, baseFreq, amp, warpStrength, mountainPower, seed);
     }
 
@@ -201,23 +247,31 @@ float evaluateContinuousHeight(vec2 worldPos) {
 
     float continent = fbm(macroP, seed + 500u, 4, 2.0, 0.5);
     float moisture  = fbm(macroP + vec2(12.3, 45.6), seed + 600u, 4, 2.0, 0.5);
+    float temp      = fbm(macroP + vec2(78.9, 13.4), seed + 700u, 3, 2.0, 0.5);
 
     float wOcean = smoothstep(0.0, -0.25, continent);
     float wHighland = smoothstep(-0.05, 0.25, continent);
-    float wHills = 1.0 - max(wOcean, wHighland);
+    float wMid = 1.0 - max(wOcean, wHighland);
 
-    float wCanyon = wHighland * smoothstep(-0.1, 0.2, moisture);
-    float wMountain = wHighland * (1.0 - smoothstep(-0.1, 0.2, moisture));
+    float coldMask = smoothstep(0.05, -0.22, temp);
+    float aridMask = smoothstep(-0.05, 0.22, moisture) * smoothstep(-0.05, 0.20, temp);
+    float wTundra  = wHighland * coldMask;
+    float wDesert  = wHighland * (1.0 - coldMask) * aridMask * 0.5;
+    float wCanyon  = wHighland * (1.0 - coldMask) * aridMask * 0.5;
+    float wMountain = wHighland * (1.0 - coldMask) * (1.0 - aridMask);
+    float wSavanna = wMid * smoothstep(-0.05, 0.20, temp);
+    float wHills   = wMid * (1.0 - smoothstep(-0.05, 0.20, temp));
 
     float hMtn = evaluatePresetHeight(worldPos, 0u, baseFreq, amp * 1.10, warpStrength, mountainPower, seed);
     float hHill = evaluatePresetHeight(worldPos, 1u, baseFreq, amp * 0.40, warpStrength * 0.5, mountainPower * 0.6, seed);
     float hCanyon = evaluatePresetHeight(worldPos, 2u, baseFreq, amp * 0.85, warpStrength, mountainPower, seed);
     float hIsland = evaluatePresetHeight(worldPos, 3u, baseFreq, amp * 0.65, warpStrength, mountainPower, seed);
+    float hTundra = evaluatePresetHeight(worldPos, 6u, baseFreq, amp * 0.72, warpStrength, mountainPower, seed);
+    float hDesert = evaluatePresetHeight(worldPos, 7u, baseFreq, amp * 0.50, warpStrength, mountainPower, seed);
+    float hSavanna = evaluatePresetHeight(worldPos, 8u, baseFreq, amp * 0.45, warpStrength, mountainPower, seed);
 
-    float totalWeight = wOcean + wHills + wMountain + wCanyon + 0.0001;
-    float blendedH = (hIsland * wOcean + hHill * wHills + hMtn * wMountain + hCanyon * wCanyon) / totalWeight;
-
-    return blendedH;
+    float totalWeight = wOcean + wHills + wSavanna + wMountain + wCanyon + wTundra + wDesert + 0.0001;
+    return (hIsland * wOcean + hHill * wHills + hSavanna * wSavanna + hMtn * wMountain + hCanyon * wCanyon + hTundra * wTundra + hDesert * wDesert) / totalWeight;
 }
 
 float evaluateTerrainHeight(vec2 worldPos) {

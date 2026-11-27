@@ -129,7 +129,7 @@ inline float evaluatePresetHeight(glm::vec2 worldPos, uint32_t presetType, float
         float buttes = 1.0f - std::abs(gradientNoiseCPU(warped * 1.7f, seed + 90u));
         buttes = std::pow(std::max(0.0f, buttes), 3.2f) * 0.30f;
         return ((terracedMesa * gorgeCarve + buttes) * 0.85f + 0.06f) * amp;
-    } else {
+    } else if (presetType == 3u) {
         float iFreq = baseFreq * 2.6f;
         glm::vec2 p = worldPos * iFreq;
 
@@ -145,6 +145,52 @@ inline float evaluatePresetHeight(glm::vec2 worldPos, uint32_t presetType, float
 
         float islandMask = glm::smoothstep(-0.06f, 0.35f, oceanBase);
         return glm::mix(-0.25f, (islandPeak * 1.3f - volcanoCrater) * 1.25f, islandMask) * amp;
+    } else if (presetType == 5u) {
+        float vFreq = baseFreq * 2.4f;
+        glm::vec2 p = worldPos * vFreq;
+        glm::vec2 q = glm::vec2(
+            fbmCPU(p * 0.45f, seed + 19u, 3, 2.0f, 0.5f),
+            fbmCPU(p * 0.45f + glm::vec2(4.7f, 9.1f), seed + 29u, 3, 2.0f, 0.5f)
+        );
+        glm::vec2 warped = p + warpStrength * 0.85f * q;
+        float cone = std::pow(std::max(0.0f, 1.0f - std::abs(gradientNoiseCPU(warped * 0.85f, seed + 301u))), 2.2f) * 1.65f;
+        float ridges = (1.0f - std::abs(gradientNoiseCPU(warped * 2.1f, seed + 302u))) * 0.45f;
+        float caldera = glm::smoothstep(-0.35f, 0.25f, fbmCPU(warped * 0.40f, seed + 303u, 3, 2.0f, 0.5f));
+        float h = glm::mix(-0.12f, (cone * mountainPower * 0.72f + ridges), caldera) - 0.04f;
+        return h * amp;
+    } else if (presetType == 6u) {
+        float tFreq = baseFreq * 2.5f;
+        glm::vec2 p = worldPos * tFreq;
+        glm::vec2 q = glm::vec2(
+            fbmCPU(p * 0.5f, seed + 41u, 3, 2.0f, 0.5f),
+            fbmCPU(p * 0.5f + glm::vec2(8.1f, 2.3f), seed + 43u, 3, 2.0f, 0.5f)
+        );
+        glm::vec2 warped = p + warpStrength * 0.65f * q;
+        float plateau = fbmCPU(warped * 0.60f, seed + 401u, 4, 2.0f, 0.5f) * 0.5f + 0.5f;
+        float fjord = std::abs(gradientNoiseCPU(warped * 0.45f, seed + 402u));
+        float fjordCut = glm::smoothstep(0.05f, 0.36f, fjord);
+        float frostRidge = std::pow(std::max(0.0f, 1.0f - std::abs(gradientNoiseCPU(warped * 1.4f, seed + 403u))), 1.9f) * 0.55f;
+        float h = glm::mix(-0.22f, plateau * 0.58f + frostRidge * mountainPower * 0.45f, fjordCut) + 0.04f;
+        return h * amp;
+    } else if (presetType == 7u) {
+        float dFreq = baseFreq * 3.0f;
+        glm::vec2 p = worldPos * dFreq;
+        float warp = fbmCPU(p * 0.45f, seed + 501u, 3, 2.0f, 0.5f) * 1.6f;
+        float dune1 = 1.0f - std::abs(std::sin((p.x * 1.15f + p.y * 0.35f + warp * warpStrength) * 2.2f));
+        float dune2 = 1.0f - std::abs(std::sin((p.x * 0.65f - p.y * 0.85f + warp * 0.7f) * 3.4f));
+        float dunes = std::pow(std::max(0.0f, dune1 * 0.70f + dune2 * 0.30f), 1.35f) * 0.62f;
+        float outcrop = std::pow(std::max(0.0f, gradientNoiseCPU(p * 0.75f, seed + 502u)), 2.2f) * 0.75f;
+        return (dunes + outcrop + 0.05f) * amp;
+    } else {
+        float sFreq = baseFreq * 2.8f;
+        glm::vec2 p = worldPos * sFreq;
+        glm::vec2 q = glm::vec2(gradientNoiseCPU(p * 0.4f, seed + 601u), gradientNoiseCPU(p * 0.4f + glm::vec2(2.9f, 6.4f), seed + 602u));
+        glm::vec2 warped = p + warpStrength * 0.5f * q;
+        float plains = (fbmCPU(warped * 0.55f, seed + 603u, 3, 2.0f, 0.5f) * 0.5f + 0.5f) * 0.35f;
+        float kopjeRaw = gradientNoiseCPU(warped * 1.1f, seed + 604u);
+        float kopje = glm::smoothstep(0.28f, 0.42f, kopjeRaw) * 0.48f + glm::smoothstep(0.42f, 0.55f, kopjeRaw) * 0.15f;
+        float dryRiver = glm::smoothstep(0.03f, 0.22f, std::abs(gradientNoiseCPU(warped * 0.30f, seed + 605u)));
+        return (plains * dryRiver + kopje + 0.06f) * amp;
     }
 }
 
@@ -156,27 +202,38 @@ inline float sampleHeight(glm::vec2 worldPos, const TerrainConfig& config) {
     uint32_t seed = config.seed;
     uint32_t presetType = config.presetType;
 
-    if (presetType < 4u) {
+    if (presetType != 4u) {
         return evaluatePresetHeight(worldPos, presetType, baseFreq, amp, warpStrength, mountainPower, seed);
     }
 
     glm::vec2 macroP = worldPos * 0.00045f;
     float continent = fbmCPU(macroP, seed + 500u, 4, 2.0f, 0.5f);
     float moisture  = fbmCPU(macroP + glm::vec2(12.3f, 45.6f), seed + 600u, 4, 2.0f, 0.5f);
+    float temp      = fbmCPU(macroP + glm::vec2(78.9f, 13.4f), seed + 700u, 3, 2.0f, 0.5f);
 
     float wOcean = glm::smoothstep(0.0f, -0.25f, continent);
     float wHighland = glm::smoothstep(-0.05f, 0.25f, continent);
-    float wHills = 1.0f - std::max(wOcean, wHighland);
-    float wCanyon = wHighland * glm::smoothstep(-0.1f, 0.2f, moisture);
-    float wMountain = wHighland * (1.0f - glm::smoothstep(-0.1f, 0.2f, moisture));
+    float wMid = 1.0f - std::max(wOcean, wHighland);
+
+    float coldMask = glm::smoothstep(0.05f, -0.22f, temp);
+    float aridMask = glm::smoothstep(-0.05f, 0.22f, moisture) * glm::smoothstep(-0.05f, 0.20f, temp);
+    float wTundra  = wHighland * coldMask;
+    float wDesert  = wHighland * (1.0f - coldMask) * aridMask * 0.5f;
+    float wCanyon  = wHighland * (1.0f - coldMask) * aridMask * 0.5f;
+    float wMountain = wHighland * (1.0f - coldMask) * (1.0f - aridMask);
+    float wSavanna = wMid * glm::smoothstep(-0.05f, 0.20f, temp);
+    float wHills   = wMid * (1.0f - glm::smoothstep(-0.05f, 0.20f, temp));
 
     float hMtn = evaluatePresetHeight(worldPos, 0u, baseFreq, amp * 1.10f, warpStrength, mountainPower, seed);
     float hHill = evaluatePresetHeight(worldPos, 1u, baseFreq, amp * 0.40f, warpStrength * 0.5f, mountainPower * 0.6f, seed);
     float hCanyon = evaluatePresetHeight(worldPos, 2u, baseFreq, amp * 0.85f, warpStrength, mountainPower, seed);
     float hIsland = evaluatePresetHeight(worldPos, 3u, baseFreq, amp * 0.65f, warpStrength, mountainPower, seed);
+    float hTundra = evaluatePresetHeight(worldPos, 6u, baseFreq, amp * 0.72f, warpStrength, mountainPower, seed);
+    float hDesert = evaluatePresetHeight(worldPos, 7u, baseFreq, amp * 0.50f, warpStrength, mountainPower, seed);
+    float hSavanna = evaluatePresetHeight(worldPos, 8u, baseFreq, amp * 0.45f, warpStrength, mountainPower, seed);
 
-    float totalWeight = wOcean + wHills + wMountain + wCanyon + 0.0001f;
-    return (hIsland * wOcean + hHill * wHills + hMtn * wMountain + hCanyon * wCanyon) / totalWeight;
+    float totalWeight = wOcean + wHills + wSavanna + wMountain + wCanyon + wTundra + wDesert + 0.0001f;
+    return (hIsland * wOcean + hHill * wHills + hSavanna * wSavanna + hMtn * wMountain + hCanyon * wCanyon + hTundra * wTundra + hDesert * wDesert) / totalWeight;
 }
 
 inline glm::vec3 sampleNormal(glm::vec2 worldPos, const TerrainConfig& config) {
@@ -190,15 +247,21 @@ inline glm::vec3 sampleNormal(glm::vec2 worldPos, const TerrainConfig& config) {
 }
 
 inline uint32_t sampleEffectiveBiome(glm::vec2 worldXZ, const TerrainConfig& config) {
-    if (config.presetType < 4u) return config.presetType;
+    if (config.presetType != 4u) return config.presetType;
     glm::vec2 macroP = worldXZ * 0.00045f;
     float continent = fbmCPU(macroP, config.seed + 500u, 4, 2.0f, 0.5f);
     float moisture  = fbmCPU(macroP + glm::vec2(12.3f, 45.6f), config.seed + 600u, 4, 2.0f, 0.5f);
+    float temp      = fbmCPU(macroP + glm::vec2(78.9f, 13.4f), config.seed + 700u, 3, 2.0f, 0.5f);
 
-    if (continent < -0.15f) return 3u;
-    if (continent > 0.15f && moisture < 0.0f) return 0u;
-    if (continent > 0.15f && moisture >= 0.0f) return 2u;
-    return 1u;
+    if (continent < -0.12f) return 3u;
+    if (continent > 0.10f) {
+        if (temp < -0.10f) return 6u;
+        if (moisture > 0.10f && temp > 0.12f) return 7u;
+        if (moisture > 0.05f) return 2u;
+        return 0u;
+    }
+    return (temp > 0.08f) ? 8u : 1u;
 }
 
 } // namespace TerrainNoiseCPU
+

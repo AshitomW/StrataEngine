@@ -112,9 +112,8 @@ void main() {
         float sunCos = dot(up, sunDir);
         vec3 sunTrans = texture(uTransmittanceLUT, transmittanceUV(r, sunCos)).rgb;
 
-        float dummy;
-        bool sunOccluded = hitSphere(p, sunDir, R_PLANET, dummy);
-        vec3 singleScatter = sunOccluded ? vec3(0.0) : (sunTrans * (rayScatter * pRay + vec3(mieScatter * pMie)));
+        float sunVis = smoothstep(-0.045, 0.045, sunCos);
+        vec3 singleScatter = sunVis * (sunTrans * (rayScatter * pRay + vec3(mieScatter * pMie)));
 
         vec2 msUV = vec2(sunCos * 0.5 + 0.5, clamp(h / (R_ATMO - R_PLANET), 0.0, 1.0));
         vec3 multiScatter = texture(uMultiScatterLUT, msUV).rgb * (rayScatter + vec3(mieScatter));
@@ -132,3 +131,4 @@ void main() {
 
     imageStore(outSkyView, gid, vec4(max(L, vec3(0.0)), 1.0));
 }
+

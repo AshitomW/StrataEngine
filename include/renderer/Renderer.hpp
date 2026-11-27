@@ -9,7 +9,6 @@
 #include "renderer/PrecipitationRenderer.hpp"
 #include "renderer/ShadowRenderer.hpp"
 #include "renderer/SkyRenderer.hpp"
-#include "renderer/StructureRenderer.hpp"
 #include "renderer/VolumetricRenderer.hpp"
 #include "renderer/WaterRenderer.hpp"
 #include "renderer/WeatherSystem.hpp"
@@ -39,6 +38,10 @@ struct FoliageKey {
     uint32_t presetType = 9999;
     float waterHeight = -9999.0f;
     float foliageDensity = -1.0f;
+    float amplitude = -1.0f;
+    float frequency = -1.0f;
+    float warpStrength = -1.0f;
+    float mountainPower = -1.0f;
 
     bool operator==(const FoliageKey& o) const {
         return seed == o.seed &&
@@ -48,7 +51,11 @@ struct FoliageKey {
             showFoliage == o.showFoliage &&
             presetType == o.presetType &&
             waterHeight == o.waterHeight &&
-            foliageDensity == o.foliageDensity;
+            foliageDensity == o.foliageDensity &&
+            amplitude == o.amplitude &&
+            frequency == o.frequency &&
+            warpStrength == o.warpStrength &&
+            mountainPower == o.mountainPower;
     }
 };
 
@@ -90,7 +97,6 @@ private:
     std::unique_ptr<MaterialLibrary> m_materialLibrary;
     std::unique_ptr<GTAORenderer> m_gtaoRenderer;
     std::unique_ptr<FoliageRenderer> m_foliageRenderer;
-    std::unique_ptr<StructureRenderer> m_structureRenderer;
     std::unique_ptr<PrecipitationRenderer> m_precipitationRenderer;
     std::unique_ptr<WeatherSystem> m_weatherSystem;
     std::unique_ptr<SkyRenderer> m_skyRenderer;
@@ -119,6 +125,5 @@ private:
     std::unique_ptr<rhi::RHIPipeline> m_postProcessPipeline;
 
     FoliageKey m_lastFoliageKey;
-    FoliageKey m_lastStructureKey;
     float m_lastTime = 0.0f;
 };

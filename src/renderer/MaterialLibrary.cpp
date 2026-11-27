@@ -44,3 +44,4 @@ MaterialLibrary::MaterialLibrary(rhi::RHIDevice& device) {
         cmd.textureBarrier(*m_normalORMArray, rhi::TextureLayout::General, rhi::TextureLayout::ShaderReadOnly);
     });
 }
+

@@ -64,3 +64,4 @@ private:
     std::array<std::array<std::unique_ptr<rhi::RHIBuffer>, MAX_FRAMES_IN_FLIGHT>, NUM_STRUCTURES> m_instanceBuffers;
     std::array<uint32_t, NUM_STRUCTURES> m_instanceCounts{};
 };
+

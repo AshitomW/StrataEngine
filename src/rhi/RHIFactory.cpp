@@ -30,3 +30,4 @@ std::unique_ptr<RHIDevice> RHIDevice::create(BackendType backend, GLFWwindow* wi
 }
 
 } // namespace rhi
+

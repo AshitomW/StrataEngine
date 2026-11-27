@@ -93,3 +93,4 @@ void main() {
     vec3 light = godRays.sunColor.rgb * godRays.sunColor.w * phase * accum;
     imageStore(outGodRays, gid, vec4(min(light, vec3(2.5)), 1.0));
 }
+

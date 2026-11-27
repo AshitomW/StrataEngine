@@ -119,3 +119,4 @@ void main() {
     vec3 psi = lumTotal / max(vec3(1.0) - fmsTotal, vec3(0.05));
     imageStore(outMultiScatter, gid, vec4(psi, 1.0));
 }
+

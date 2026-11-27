@@ -29,3 +29,4 @@ void PrecipitationRenderer::recordRenderCommands(const FrameContext& frame) {
     cmd.bindUniformBuffer(0, *frame.globalUBO);
     cmd.draw(6, MAX_PARTICLES, 0);
 }
+

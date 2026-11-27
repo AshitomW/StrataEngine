@@ -146,6 +146,22 @@ struct TerrainConfig {
         applyPreset(EngineConstants::Presets::MULTIBIOME);
     }
 
+    void applyVolcanic() {
+        applyPreset(EngineConstants::Presets::VOLCANIC);
+    }
+
+    void applyTundra() {
+        applyPreset(EngineConstants::Presets::TUNDRA);
+    }
+
+    void applyDesert() {
+        applyPreset(EngineConstants::Presets::DESERT);
+    }
+
+    void applySavanna() {
+        applyPreset(EngineConstants::Presets::SAVANNA);
+    }
+
     bool showWater = true;
     float waveAmplitude = EngineConstants::Water::DEFAULT_WAVE_AMPLITUDE;
     float waveSpeed = EngineConstants::Water::DEFAULT_WAVE_SPEED;
@@ -184,15 +200,15 @@ struct TerrainConfig {
     float fogMultiplier = 1.0f;
     float lightningFlash = 0.0f;
 
-    bool showStructures = true;
-    float structureDensity = 1.0f;
+    bool showStructures = false;
+    float structureDensity = 0.0f;
 
     bool ssrEnabled = true;
     bool godRaysEnabled = true;
     float godRaysIntensity = 0.55f;
     bool cdlodMorph = true;
     bool sharpenEnabled = true;
-    int chunkBudgetPerFrame = 8;
+    int chunkBudgetPerFrame = 16;
 
     void toggleWater() {
         showWater = !showWater;

@@ -41,3 +41,4 @@ private:
     std::unique_ptr<rhi::RHIPipeline> m_gtaoPipeline;
     std::unique_ptr<rhi::RHIPipeline> m_blurPipeline;
 };
+

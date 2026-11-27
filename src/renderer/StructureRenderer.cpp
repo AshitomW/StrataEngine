@@ -335,3 +335,4 @@ void StructureRenderer::recordShadowCommands(rhi::RHICommandList& cmd, const rhi
         cmd.drawIndexed(mesh.indexCount, m_instanceCounts[type], mesh.firstIndex);
     }
 }
+
