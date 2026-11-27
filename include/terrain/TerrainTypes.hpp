@@ -162,6 +162,14 @@ struct TerrainConfig {
     float sunIntensity = 2.6f;
     float iblStrength = 1.0f;
 
+    // Milestone 3: Shadows, GTAO & Baked PBR Textures
+    bool shadowsEnabled = true;
+    float shadowStrength = 1.0f;
+    float shadowBias = 0.0012f;
+    bool gtaoEnabled = true;
+    float gtaoStrength = 0.75f;
+    bool usePBRTextures = true;
+
     void toggleWater() {
         showWater = !showWater;
     }
@@ -196,6 +204,13 @@ struct GlobalUBO {
     glm::vec4 biomeParams;
     glm::vec4 postParams;
     glm::vec4 atmosphereParams;
+    glm::mat4 lightSpaceMatrices[4];
+    glm::vec4 cascadeSplits;
+    glm::vec4 shadowParams;
+};
+
+struct ShadowPushConstants {
+    glm::uvec4 cascadeInfo;
 };
 
 struct ChunkPushConstants {

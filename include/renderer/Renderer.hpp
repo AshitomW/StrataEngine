@@ -4,6 +4,9 @@
 #include "core/Frustum.hpp"
 #include "renderer/AtmosphereRenderer.hpp"
 #include "renderer/FoliageRenderer.hpp"
+#include "renderer/GTAORenderer.hpp"
+#include "renderer/MaterialLibrary.hpp"
+#include "renderer/ShadowRenderer.hpp"
 #include "renderer/SkyRenderer.hpp"
 #include "renderer/WaterRenderer.hpp"
 #include "renderer/FrameContext.hpp"
@@ -79,6 +82,9 @@ private:
     rhi::RHIDevice& m_device;
 
     std::unique_ptr<AtmosphereRenderer> m_atmosphereRenderer;
+    std::unique_ptr<ShadowRenderer> m_shadowRenderer;
+    std::unique_ptr<MaterialLibrary> m_materialLibrary;
+    std::unique_ptr<GTAORenderer> m_gtaoRenderer;
     std::unique_ptr<FoliageRenderer> m_foliageRenderer;
     std::unique_ptr<SkyRenderer> m_skyRenderer;
     std::unique_ptr<WaterRenderer> m_waterRenderer;
@@ -87,12 +93,12 @@ private:
     std::unique_ptr<rhi::RHIPipeline> m_solidPipeline;
     std::unique_ptr<rhi::RHIPipeline> m_wireframePipeline;
 
-    // HDR offscreen & post-process resources
     uint32_t m_screenWidth = 0;
     uint32_t m_screenHeight = 0;
     std::unique_ptr<rhi::RHITexture> m_hdrColor;
     std::unique_ptr<rhi::RHITexture> m_sceneDepth;
     std::unique_ptr<rhi::RHITexture> m_blackFallbackTex;
+    std::unique_ptr<rhi::RHITexture> m_whiteFallbackTex;
     std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT> m_bloomDownMips;
     std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT - 1> m_bloomUpMips;
     std::unique_ptr<rhi::RHISampler> m_linearSampler;

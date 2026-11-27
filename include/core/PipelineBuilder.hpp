@@ -21,6 +21,8 @@ public:
     PipelineBuilder& setRasterizationSamples(VkSampleCountFlagBits samples);
 
     PipelineBuilder& setDepthState(bool testEnable, bool writeEnable, VkCompareOp compareOp);
+    PipelineBuilder& setDepthBias(float constantFactor, float slopeFactor);
+    PipelineBuilder& setColorAttachmentCount(uint32_t count);
     PipelineBuilder& setBlendEnable(bool enable);
     PipelineBuilder& setDynamicStates(const std::vector<VkDynamicState>& states);
 
@@ -51,6 +53,11 @@ private:
     bool m_depthTestEnable = true;
     bool m_depthWriteEnable = true;
     VkCompareOp m_depthCompareOp = VK_COMPARE_OP_LESS;
+
+    bool m_depthBiasEnable = false;
+    float m_depthBiasConstant = 0.0f;
+    float m_depthBiasSlope = 0.0f;
+    uint32_t m_colorAttachmentCount = 1;
 
     bool m_blendEnable = false;
 

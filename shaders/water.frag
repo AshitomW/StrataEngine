@@ -22,7 +22,37 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 biomeParams;
     vec4 postParams;
     vec4 atmosphereParams;
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
+    vec4 shadowParams;
 } ubo;
+
+layout(set = 2, binding = 0) uniform sampler2D uShadowAtlas;
+
+float sampleWaterShadow(vec3 worldPos, float viewDepth) {
+    float strength = ubo.shadowParams.x;
+    if (strength <= 0.001) return 1.0;
+
+    int cascade = 3;
+    if (viewDepth < ubo.cascadeSplits.x) cascade = 0;
+    else if (viewDepth < ubo.cascadeSplits.y) cascade = 1;
+    else if (viewDepth < ubo.cascadeSplits.z) cascade = 2;
+
+    vec4 lsPos = ubo.lightSpaceMatrices[cascade] * vec4(worldPos, 1.0);
+    vec3 proj = lsPos.xyz / lsPos.w;
+    vec2 tileUV = proj.xy * 0.5 + 0.5;
+    if (any(lessThan(tileUV, vec2(0.01))) || any(greaterThan(tileUV, vec2(0.99))) || proj.z > 1.0) {
+        return 1.0;
+    }
+
+    vec2 tileOffset = vec2(float(cascade % 2), float(cascade / 2)) * 0.5;
+    vec2 atlasUV = tileOffset + tileUV * 0.5;
+    float bias = ubo.shadowParams.y * float(cascade + 1);
+    float d = texture(uShadowAtlas, atlasUV).r;
+    float shadow = ((proj.z - bias) <= d) ? 1.0 : 0.0;
+    float distFade = 1.0 - smoothstep(ubo.cascadeSplits.w * 0.80, ubo.cascadeSplits.w, viewDepth);
+    return mix(1.0, shadow, strength * distFade);
+}
 
 layout(push_constant) uniform WaterPC {
     vec4 waterParams1; // x: waterHeight, y: waveAmplitude, z: waveSpeed, w: time
@@ -268,9 +298,12 @@ void main() {
     vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.35 * ubo.skyColorZenith.a;
     vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5) * ubo.atmosphereParams.w;
 
+    float viewDepth = max(-(ubo.view * vec4(inWorldPos, 1.0)).z, 0.0);
+    float shadow = sampleWaterShadow(inWorldPos, viewDepth);
+
     float NdotL = max(dot(N, L), 0.0);
     float wrapLight = pow(clamp(dot(N, L) * 0.35 + 0.65, 0.0, 1.0), 1.8);
-    vec3 directLight = ubo.sunColor.rgb * sunIntensity * 0.65 * (NdotL * 0.70 + wrapLight * 0.30);
+    vec3 directLight = ubo.sunColor.rgb * sunIntensity * 0.65 * (NdotL * 0.70 + wrapLight * 0.30) * shadow;
     vec3 totalIllum = ambient + directLight;
 
     // Physical water body & Beer-Lambert light extinction
@@ -285,7 +318,7 @@ void main() {
 
     vec3 waterColor = mix(waterBodyColor, reflectionColor, fresnel);
     if (L.y > -0.05) {
-        waterColor += ubo.sunColor.rgb * specular * sunIntensity * 0.75;
+        waterColor += ubo.sunColor.rgb * specular * sunIntensity * 0.75 * shadow;
     }
 
     // Natural shoreline froth

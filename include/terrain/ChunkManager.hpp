@@ -22,6 +22,7 @@ public:
     void setRadius(rhi::RHIDevice& device, int newRadius, const TerrainConfig& config);
 
     void recordRenderCommands(rhi::RHICommandList& cmd, const Frustum& frustum, const TerrainConfig& config);
+    void recordShadowCommands(rhi::RHICommandList& cmd, uint32_t cascadeIndex, const TerrainConfig& config);
 
     size_t getChunkCount() const { return m_chunks.size(); }
     int getRadius() const { return m_radius; }

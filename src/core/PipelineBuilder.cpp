@@ -119,6 +119,18 @@ PipelineBuilder& PipelineBuilder::setDepthState(bool testEnable, bool writeEnabl
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::setDepthBias(float constantFactor, float slopeFactor) {
+    m_depthBiasEnable = (constantFactor != 0.0f || slopeFactor != 0.0f);
+    m_depthBiasConstant = constantFactor;
+    m_depthBiasSlope = slopeFactor;
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::setColorAttachmentCount(uint32_t count) {
+    m_colorAttachmentCount = count;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::setBlendEnable(bool enable) {
     m_blendEnable = enable;
     return *this;
@@ -168,6 +180,9 @@ VkPipeline PipelineBuilder::build(VkDevice device) const {
     rasterizer.cullMode = m_cullMode;
     rasterizer.frontFace = m_frontFace;
     rasterizer.lineWidth = 1.0f;
+    rasterizer.depthBiasEnable = m_depthBiasEnable ? VK_TRUE : VK_FALSE;
+    rasterizer.depthBiasConstantFactor = m_depthBiasConstant;
+    rasterizer.depthBiasSlopeFactor = m_depthBiasSlope;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -192,8 +207,8 @@ VkPipeline PipelineBuilder::build(VkDevice device) const {
 
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
+    colorBlending.attachmentCount = m_colorAttachmentCount;
+    colorBlending.pAttachments = (m_colorAttachmentCount > 0) ? &colorBlendAttachment : nullptr;
 
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;

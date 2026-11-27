@@ -19,9 +19,47 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 biomeParams;
     vec4 postParams;
     vec4 atmosphereParams;
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
+    vec4 shadowParams;
 } ubo;
 
+layout(set = 2, binding = 0) uniform sampler2D uShadowAtlas;
+
 const float PI = 3.14159265359;
+
+float sampleShadow(vec3 worldPos, vec3 N, vec3 L, float viewDepth) {
+    float strength = ubo.shadowParams.x;
+    if (strength <= 0.001) return 1.0;
+
+    int cascade = 3;
+    if (viewDepth < ubo.cascadeSplits.x) cascade = 0;
+    else if (viewDepth < ubo.cascadeSplits.y) cascade = 1;
+    else if (viewDepth < ubo.cascadeSplits.z) cascade = 2;
+
+    float normalOffset = 0.06 * float(cascade + 1);
+    vec4 lsPos = ubo.lightSpaceMatrices[cascade] * vec4(worldPos + N * normalOffset, 1.0);
+    vec3 proj = lsPos.xyz / lsPos.w;
+    vec2 tileUV = proj.xy * 0.5 + 0.5;
+    if (any(lessThan(tileUV, vec2(0.01))) || any(greaterThan(tileUV, vec2(0.99))) || proj.z > 1.0) {
+        return 1.0;
+    }
+
+    vec2 tileOffset = vec2(float(cascade % 2), float(cascade / 2)) * 0.5;
+    vec2 atlasUV = tileOffset + tileUV * 0.5;
+    float bias = ubo.shadowParams.y * float(cascade + 1);
+
+    vec2 texel = vec2(1.0 / 4096.0);
+    float shadow = 0.0;
+    vec2 offsets[4] = vec2[4](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0));
+    for (int i = 0; i < 4; ++i) {
+        float d = texture(uShadowAtlas, atlasUV + offsets[i] * texel).r;
+        shadow += ((proj.z - bias) <= d) ? 1.0 : 0.0;
+    }
+    shadow *= 0.25;
+    float distFade = 1.0 - smoothstep(ubo.cascadeSplits.w * 0.80, ubo.cascadeSplits.w, viewDepth);
+    return mix(1.0, shadow, strength * distFade);
+}
 
 void main() {
     vec3 N = normalize(inNormal);
@@ -52,7 +90,10 @@ void main() {
     vec3 H = normalize(L + V);
     float spec = pow(max(dot(N, H), 0.0), 24.0) * 0.06 * step(0.0, NdotL);
 
-    vec3 directLight = sunRadiance * ((NdotL * 0.85 + wrapLight) / PI + sss / PI) + sunRadiance * spec;
+    float viewDepth = max(-(ubo.view * vec4(inWorldPos, 1.0)).z, 0.0);
+    float shadow = sampleShadow(inWorldPos, N, L, viewDepth);
+
+    vec3 directLight = (sunRadiance * ((NdotL * 0.85 + wrapLight) / PI + sss / PI) + sunRadiance * spec) * shadow;
 
     vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a * 1.65;
     vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.42 * ubo.skyColorZenith.a;

@@ -1,4 +1,5 @@
 #include "renderer/FoliageRenderer.hpp"
+#include "renderer/ShadowRenderer.hpp"
 #include <cmath>
 #include <cstring>
 #include <random>
@@ -350,6 +351,7 @@ void FoliageRenderer::createPipeline(rhi::RHIDevice& device) {
     desc.hasDepth = true;
     desc.usesUniformBuffer = true;
     desc.usesStorageBuffer = false;
+    desc.numSampledTextures = 1;
 
     m_pipeline = device.createGraphicsPipeline(desc);
 }
@@ -581,6 +583,9 @@ void FoliageRenderer::recordRenderCommands(const FrameContext& frame) {
 
     cmd.bindGraphicsPipeline(*m_pipeline);
     cmd.bindUniformBuffer(0, *frame.globalUBO);
+    if (frame.shadows) {
+        cmd.bindTexture(0, frame.shadows->getShadowAtlas(), frame.shadows->getShadowSampler());
+    }
     cmd.bindIndexBuffer(*m_indexBuffer);
     cmd.bindVertexBuffer(0, *m_vertexBuffer);
 
@@ -589,6 +594,29 @@ void FoliageRenderer::recordRenderCommands(const FrameContext& frame) {
 
         cmd.bindVertexBuffer(1, *m_instanceBuffers[type][frameIndex]);
 
+        const auto& mesh = m_modelMeshes[type];
+        cmd.drawIndexed(mesh.indexCount, m_instanceCounts[type], mesh.firstIndex);
+    }
+}
+
+void FoliageRenderer::recordShadowCommands(rhi::RHICommandList& cmd, uint32_t frameIndex, uint32_t cascadeIndex) {
+    bool hasAny = false;
+    for (uint32_t c : m_instanceCounts) {
+        if (c > 0) { hasAny = true; break; }
+    }
+    if (!hasAny) return;
+
+    ShadowPushConstants pc{};
+    pc.cascadeInfo = glm::uvec4(cascadeIndex, 0u, 0u, 0u);
+    cmd.pushConstants(rhi::ShaderStage::Vertex, &pc, sizeof(ShadowPushConstants));
+
+    cmd.bindIndexBuffer(*m_indexBuffer);
+    cmd.bindVertexBuffer(0, *m_vertexBuffer);
+
+    for (uint32_t type = 0; type < NUM_MODELS; ++type) {
+        if (m_instanceCounts[type] == 0) continue;
+
+        cmd.bindVertexBuffer(1, *m_instanceBuffers[type][frameIndex]);
         const auto& mesh = m_modelMeshes[type];
         cmd.drawIndexed(mesh.indexCount, m_instanceCounts[type], mesh.firstIndex);
     }

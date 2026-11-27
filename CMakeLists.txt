@@ -47,8 +47,13 @@ set(SHADERS
     atmo_skyview.comp
     bloom_downsample.comp
     bloom_upsample.comp
+    gtao.comp
+    gtao_blur.comp
+    material_bake.comp
     postprocess.vert
     postprocess.frag
+    shadow_terrain.vert
+    shadow_foliage.vert
     terrain.comp
     terrain.vert
     terrain.frag
@@ -125,7 +130,10 @@ set(ENGINE_SOURCES
     src/camera/Camera.cpp
     src/renderer/AtmosphereRenderer.cpp
     src/renderer/FoliageRenderer.cpp
+    src/renderer/GTAORenderer.cpp
+    src/renderer/MaterialLibrary.cpp
     src/renderer/Renderer.cpp
+    src/renderer/ShadowRenderer.cpp
     src/renderer/SkyRenderer.cpp
     src/renderer/WaterRenderer.cpp
     src/terrain/ChunkManager.cpp

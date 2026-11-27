@@ -232,6 +232,8 @@ public:
     id<MTLDepthStencilState> depthState = nil;
     MTLCullMode cullMode = MTLCullModeNone;
     MTLTriangleFillMode fillMode = MTLTriangleFillModeFill;
+    float depthBiasConstant = 0.0f;
+    float depthBiasSlope = 0.0f;
 
     int32_t vertUboSlot = -1;
     int32_t fragUboSlot = -1;
@@ -261,13 +263,15 @@ public:
     void beginRenderPass(const RenderPassDesc& desc) override {
         endActiveEncoders();
         MTLRenderPassDescriptor* rpd = m_rpDesc;
-        if (desc.colorTarget != nullptr) {
+        if (desc.colorTarget != nullptr || desc.depthTarget != nullptr) {
             rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-            const auto& mtlColor = static_cast<const MetalRHITexture&>(*desc.colorTarget);
-            rpd.colorAttachments[0].texture = mtlColor.getMTLTexture();
-            rpd.colorAttachments[0].clearColor = MTLClearColorMake(desc.clearColor.r, desc.clearColor.g, desc.clearColor.b, desc.clearColor.a);
-            rpd.colorAttachments[0].loadAction = desc.clearColorEnable ? MTLLoadActionClear : MTLLoadActionLoad;
-            rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+            if (desc.colorTarget != nullptr) {
+                const auto& mtlColor = static_cast<const MetalRHITexture&>(*desc.colorTarget);
+                rpd.colorAttachments[0].texture = mtlColor.getMTLTexture();
+                rpd.colorAttachments[0].clearColor = MTLClearColorMake(desc.clearColor.r, desc.clearColor.g, desc.clearColor.b, desc.clearColor.a);
+                rpd.colorAttachments[0].loadAction = desc.clearColorEnable ? MTLLoadActionClear : MTLLoadActionLoad;
+                rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+            }
 
             if (desc.depthTarget != nullptr) {
                 const auto& mtlDepth = static_cast<const MetalRHITexture&>(*desc.depthTarget);
@@ -329,6 +333,7 @@ public:
         [m_renderEncoder setDepthStencilState:mtlPipe.depthState];
         [m_renderEncoder setCullMode:mtlPipe.cullMode];
         [m_renderEncoder setTriangleFillMode:mtlPipe.fillMode];
+        [m_renderEncoder setDepthBias:mtlPipe.depthBiasConstant slopeScale:mtlPipe.depthBiasSlope clamp:0.0f];
     }
 
     void bindComputePipeline(const RHIPipeline& pipeline) override {
@@ -657,16 +662,22 @@ std::unique_ptr<RHIPipeline> MetalDevice::createGraphicsPipeline(const GraphicsP
     pipe->isCompute = false;
     pipe->cullMode = toMTLCullMode(desc.cullMode);
     pipe->fillMode = toMTLFillMode(desc.polygonMode);
+    pipe->depthBiasConstant = desc.depthBiasConstant;
+    pipe->depthBiasSlope = desc.depthBiasSlope;
 
     id<MTLLibrary> vertLib = m_impl->getOrCompileLibrary(desc.vertexShader);
-    id<MTLLibrary> fragLib = m_impl->getOrCompileLibrary(desc.fragmentShader);
-
     MTLRenderPipelineDescriptor* rpd = [[MTLRenderPipelineDescriptor alloc] init];
     rpd.vertexFunction = [vertLib newFunctionWithName:@"main0"];
-    rpd.fragmentFunction = [fragLib newFunctionWithName:@"main0"];
+    if (!rpd.vertexFunction) {
+        throw std::runtime_error("Failed to find main0 entry point in Metal vertex shader");
+    }
 
-    if (!rpd.vertexFunction || !rpd.fragmentFunction) {
-        throw std::runtime_error("Failed to find main0 entry point in Metal shader");
+    if (!desc.fragmentShader.empty() && desc.hasColor) {
+        id<MTLLibrary> fragLib = m_impl->getOrCompileLibrary(desc.fragmentShader);
+        rpd.fragmentFunction = [fragLib newFunctionWithName:@"main0"];
+        if (!rpd.fragmentFunction) {
+            throw std::runtime_error("Failed to find main0 entry point in Metal fragment shader");
+        }
     }
 
     if (!desc.vertexAttributes.empty() || !desc.vertexBindings.empty()) {
@@ -687,20 +698,25 @@ std::unique_ptr<RHIPipeline> MetalDevice::createGraphicsPipeline(const GraphicsP
         rpd.vertexDescriptor = vd;
     }
 
-    rpd.colorAttachments[0].pixelFormat = toMTLPixelFormat(desc.colorFormat);
-    if (desc.blendEnable) {
-        rpd.colorAttachments[0].blendingEnabled = YES;
-        rpd.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
-        rpd.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
-        rpd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-        rpd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-        rpd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
-        rpd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorZero;
-    }
-    if (desc.colorFormat == Format::BGRA8_SRGB) {
-        rpd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    if (desc.hasColor) {
+        rpd.colorAttachments[0].pixelFormat = toMTLPixelFormat(desc.colorFormat);
+        if (desc.blendEnable) {
+            rpd.colorAttachments[0].blendingEnabled = YES;
+            rpd.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+            rpd.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+            rpd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+            rpd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+            rpd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+            rpd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorZero;
+        }
+        if (desc.colorFormat == Format::BGRA8_SRGB) {
+            rpd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        } else {
+            rpd.depthAttachmentPixelFormat = desc.hasDepth ? toMTLPixelFormat(desc.depthFormat) : MTLPixelFormatInvalid;
+        }
     } else {
-        rpd.depthAttachmentPixelFormat = desc.hasDepth ? toMTLPixelFormat(desc.depthFormat) : MTLPixelFormatInvalid;
+        rpd.colorAttachments[0].pixelFormat = MTLPixelFormatInvalid;
+        rpd.depthAttachmentPixelFormat = desc.hasDepth ? toMTLPixelFormat(desc.depthFormat) : MTLPixelFormatDepth32Float;
     }
 
     MTLRenderPipelineReflection* reflection = nil;

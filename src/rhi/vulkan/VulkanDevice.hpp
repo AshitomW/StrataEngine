@@ -187,7 +187,7 @@ public:
     const VulkanContext& getContext() const { return m_context; }
     const VulkanSwapchain& getSwapchain() const { return *m_swapchain; }
     uint32_t getCurrentImageIndex() const { return m_currentImageIndex; }
-    VkRenderPass getOrCreateOffscreenRenderPass(Format colorFormat, bool hasDepth, Format depthFormat, bool clearColor, bool clearDepth);
+    VkRenderPass getOrCreateOffscreenRenderPass(bool hasColor, Format colorFormat, bool hasDepth, Format depthFormat, bool clearColor, bool clearDepth);
     VkFramebuffer getOrCreateFramebuffer(VkRenderPass rp, VkImageView colorView, VkImageView depthView, uint32_t w, uint32_t h);
     void invalidateFramebuffersForView(VkImageView view);
 

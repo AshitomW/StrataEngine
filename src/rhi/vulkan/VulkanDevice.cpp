@@ -300,30 +300,37 @@ void VulkanRHICommandList::beginRenderPass(const RenderPassDesc& desc) {
 
     auto* colorTex = static_cast<const VulkanRHITexture*>(desc.colorTarget);
     auto* depthTex = static_cast<const VulkanRHITexture*>(desc.depthTarget);
-    if (!colorTex) {
-        throw std::runtime_error("Offscreen RenderPassDesc requires colorTarget");
+    if (!colorTex && !depthTex) {
+        throw std::runtime_error("Offscreen RenderPassDesc requires colorTarget or depthTarget");
     }
 
+    bool hasColor = (colorTex != nullptr);
     bool hasDepth = (depthTex != nullptr);
+    Format colorFmt = hasColor ? colorTex->getFormat() : Format::RGBA16F;
     Format depthFmt = hasDepth ? depthTex->getFormat() : Format::D32F;
+    uint32_t width = hasColor ? colorTex->getWidth() : depthTex->getWidth();
+    uint32_t height = hasColor ? colorTex->getHeight() : depthTex->getHeight();
+
     VkRenderPass rp = m_device.getOrCreateOffscreenRenderPass(
-        colorTex->getFormat(), hasDepth, depthFmt, desc.clearColorEnable, desc.clearDepthEnable
+        hasColor, colorFmt, hasDepth, depthFmt, desc.clearColorEnable, desc.clearDepthEnable
     );
     VkFramebuffer fb = m_device.getOrCreateFramebuffer(
         rp,
-        colorTex->getVkImageView(),
+        hasColor ? colorTex->getVkImageView() : VK_NULL_HANDLE,
         hasDepth ? depthTex->getVkImageView() : VK_NULL_HANDLE,
-        colorTex->getWidth(),
-        colorTex->getHeight()
+        width,
+        height
     );
 
     std::vector<VkClearValue> clearValues;
-    VkClearValue cVal{};
-    cVal.color.float32[0] = desc.clearColor.r;
-    cVal.color.float32[1] = desc.clearColor.g;
-    cVal.color.float32[2] = desc.clearColor.b;
-    cVal.color.float32[3] = desc.clearColor.a;
-    clearValues.push_back(cVal);
+    if (hasColor) {
+        VkClearValue cVal{};
+        cVal.color.float32[0] = desc.clearColor.r;
+        cVal.color.float32[1] = desc.clearColor.g;
+        cVal.color.float32[2] = desc.clearColor.b;
+        cVal.color.float32[3] = desc.clearColor.a;
+        clearValues.push_back(cVal);
+    }
     if (hasDepth) {
         VkClearValue dVal{};
         dVal.depthStencil = {desc.clearDepth, 0};
@@ -335,7 +342,7 @@ void VulkanRHICommandList::beginRenderPass(const RenderPassDesc& desc) {
     rpInfo.renderPass = rp;
     rpInfo.framebuffer = fb;
     rpInfo.renderArea.offset = {0, 0};
-    rpInfo.renderArea.extent = {colorTex->getWidth(), colorTex->getHeight()};
+    rpInfo.renderArea.extent = {width, height};
     rpInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     rpInfo.pClearValues = clearValues.data();
 
@@ -758,8 +765,9 @@ VkDescriptorSetLayout VulkanDevice::getOrCreateComputeSetLayout(uint32_t numStor
     return layout;
 }
 
-VkRenderPass VulkanDevice::getOrCreateOffscreenRenderPass(Format colorFormat, bool hasDepth, Format depthFormat, bool clearColor, bool clearDepth) {
-    uint64_t key = (static_cast<uint64_t>(colorFormat) << 24) |
+VkRenderPass VulkanDevice::getOrCreateOffscreenRenderPass(bool hasColor, Format colorFormat, bool hasDepth, Format depthFormat, bool clearColor, bool clearDepth) {
+    uint64_t key = (static_cast<uint64_t>(hasColor ? 1 : 0) << 32) |
+                   (static_cast<uint64_t>(colorFormat) << 24) |
                    (static_cast<uint64_t>(hasDepth ? 1 : 0) << 16) |
                    (static_cast<uint64_t>(depthFormat) << 8) |
                    (static_cast<uint64_t>(clearColor ? 1 : 0) << 1) |
@@ -770,19 +778,21 @@ VkRenderPass VulkanDevice::getOrCreateOffscreenRenderPass(Format colorFormat, bo
     }
 
     std::vector<VkAttachmentDescription> attachments;
-    VkAttachmentDescription colorAtt{};
-    colorAtt.format = toVkFormat(colorFormat);
-    colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAtt.loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-    colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAtt.initialLayout = clearColor ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAtt.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    attachments.push_back(colorAtt);
-
     VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depthRef{hasColor ? 1u : 0u, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+    if (hasColor) {
+        VkAttachmentDescription colorAtt{};
+        colorAtt.format = toVkFormat(colorFormat);
+        colorAtt.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAtt.loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAtt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAtt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorAtt.initialLayout = clearColor ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorAtt.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments.push_back(colorAtt);
+    }
 
     if (hasDepth) {
         VkAttachmentDescription depthAtt{};
@@ -799,8 +809,8 @@ VkRenderPass VulkanDevice::getOrCreateOffscreenRenderPass(Format colorFormat, bo
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorRef;
+    subpass.colorAttachmentCount = hasColor ? 1u : 0u;
+    subpass.pColorAttachments = hasColor ? &colorRef : nullptr;
     subpass.pDepthStencilAttachment = hasDepth ? &depthRef : nullptr;
 
     VkSubpassDependency dep{};
@@ -808,7 +818,7 @@ VkRenderPass VulkanDevice::getOrCreateOffscreenRenderPass(Format colorFormat, bo
     dep.dstSubpass = 0;
     dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | (hasDepth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : 0u);
+    dep.dstAccessMask = (hasColor ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0u) | (hasDepth ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : 0u);
 
     VkRenderPassCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -835,7 +845,8 @@ VkFramebuffer VulkanDevice::getOrCreateFramebuffer(VkRenderPass rp, VkImageView 
         }
     }
 
-    std::vector<VkImageView> views = {colorView};
+    std::vector<VkImageView> views;
+    if (colorView != VK_NULL_HANDLE) views.push_back(colorView);
     if (depthView != VK_NULL_HANDLE) views.push_back(depthView);
 
     VkFramebufferCreateInfo fbInfo{};
@@ -992,7 +1003,9 @@ std::unique_ptr<RHIPipeline> VulkanDevice::createGraphicsPipeline(const Graphics
     });
 
     VkShaderModule vert = PipelineBuilder::createShaderModule(device, "shaders/" + desc.vertexShader + ".spv");
-    VkShaderModule frag = PipelineBuilder::createShaderModule(device, "shaders/" + desc.fragmentShader + ".spv");
+    VkShaderModule frag = desc.fragmentShader.empty()
+        ? VK_NULL_HANDLE
+        : PipelineBuilder::createShaderModule(device, "shaders/" + desc.fragmentShader + ".spv");
 
     std::vector<VkVertexInputBindingDescription> bindings;
     for (const auto& b : desc.vertexBindings) {
@@ -1008,17 +1021,21 @@ std::unique_ptr<RHIPipeline> VulkanDevice::createGraphicsPipeline(const Graphics
         attrs.push_back({a.location, a.binding, toVkFormat(a.format), a.offset});
     }
 
-    VkRenderPass targetRP = (desc.colorFormat == Format::BGRA8_SRGB)
+    VkRenderPass targetRP = (desc.hasColor && desc.colorFormat == Format::BGRA8_SRGB)
         ? m_swapchain->getRenderPass()
-        : getOrCreateOffscreenRenderPass(desc.colorFormat, desc.hasDepth, desc.depthFormat, true, true);
+        : getOrCreateOffscreenRenderPass(desc.hasColor, desc.colorFormat, desc.hasDepth, desc.depthFormat, true, true);
 
     PipelineBuilder builder;
-    builder.setVertexShader(vert)
-        .setFragmentShader(frag)
-        .setVertexInput(bindings, attrs)
+    builder.setVertexShader(vert);
+    if (frag != VK_NULL_HANDLE) {
+        builder.setFragmentShader(frag);
+    }
+    builder.setVertexInput(bindings, attrs)
         .setCullMode(toVkCullMode(desc.cullMode))
         .setPolygonMode(toVkPolygonMode(desc.polygonMode))
         .setDepthState(desc.depthTestEnable, desc.depthWriteEnable, toVkCompareOp(desc.depthCompareOp))
+        .setDepthBias(desc.depthBiasConstant, desc.depthBiasSlope)
+        .setColorAttachmentCount(desc.hasColor ? 1u : 0u)
         .setBlendEnable(desc.blendEnable)
         .setPipelineLayout(layout)
         .setRenderPass(targetRP);
@@ -1033,13 +1050,13 @@ std::unique_ptr<RHIPipeline> VulkanDevice::createGraphicsPipeline(const Graphics
             std::cerr << "Wireframe mode not supported: " << e.what() << std::endl;
         } else {
             vkDestroyShaderModule(device, vert, nullptr);
-            vkDestroyShaderModule(device, frag, nullptr);
+            if (frag != VK_NULL_HANDLE) vkDestroyShaderModule(device, frag, nullptr);
             throw;
         }
     }
 
     vkDestroyShaderModule(device, vert, nullptr);
-    vkDestroyShaderModule(device, frag, nullptr);
+    if (frag != VK_NULL_HANDLE) vkDestroyShaderModule(device, frag, nullptr);
     return pipe;
 }
 

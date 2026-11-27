@@ -40,6 +40,7 @@ public:
     );
 
     void recordRenderCommands(const FrameContext& frame);
+    void recordShadowCommands(rhi::RHICommandList& cmd, uint32_t frameIndex, uint32_t cascadeIndex);
 
 private:
     void createModels(rhi::RHIDevice& device);

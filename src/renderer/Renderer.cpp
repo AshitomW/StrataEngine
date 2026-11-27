@@ -30,18 +30,27 @@ Renderer::Renderer(rhi::RHIDevice& device, GLFWwindow* window)
     createPipelines();
 
     m_atmosphereRenderer = std::make_unique<AtmosphereRenderer>(device);
+    m_shadowRenderer = std::make_unique<ShadowRenderer>(device);
+    m_materialLibrary = std::make_unique<MaterialLibrary>(device);
+    m_gtaoRenderer = std::make_unique<GTAORenderer>(device);
     m_foliageRenderer = std::make_unique<FoliageRenderer>(device);
     m_skyRenderer = std::make_unique<SkyRenderer>(device);
     m_waterRenderer = std::make_unique<WaterRenderer>(device);
 
-    rhi::TextureDesc blackDesc{};
-    blackDesc.width = 1;
-    blackDesc.height = 1;
-    blackDesc.format = rhi::Format::RGBA16F;
-    blackDesc.usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::Storage;
-    m_blackFallbackTex = device.createTexture(blackDesc);
+    rhi::TextureDesc fallbackDesc{};
+    fallbackDesc.width = 1;
+    fallbackDesc.height = 1;
+    fallbackDesc.format = rhi::Format::RGBA16F;
+    fallbackDesc.usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::Storage;
+    m_blackFallbackTex = device.createTexture(fallbackDesc);
+
+    rhi::TextureDesc whiteDesc = fallbackDesc;
+    whiteDesc.format = rhi::Format::R16F;
+    m_whiteFallbackTex = device.createTexture(whiteDesc);
+
     device.executeImmediateCompute([&](rhi::RHICommandList& cmd) {
         cmd.textureBarrier(*m_blackFallbackTex, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
+        cmd.textureBarrier(*m_whiteFallbackTex, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
     });
 
     createScreenResources(device.getSwapchainWidth(), device.getSwapchainHeight());
@@ -78,6 +87,7 @@ void Renderer::createPipelines() {
     solidDesc.hasDepth = true;
     solidDesc.usesUniformBuffer = true;
     solidDesc.usesStorageBuffer = true;
+    solidDesc.numSampledTextures = 3; // ShadowAtlas, MaterialAlbedo, MaterialNormalORM
     solidDesc.pushConstantSize = sizeof(ChunkPushConstants);
     solidDesc.pushConstantStages = rhi::ShaderStage::Vertex;
 
@@ -119,7 +129,7 @@ void Renderer::createPipelines() {
     ppDesc.hasDepth = false;
     ppDesc.usesUniformBuffer = true;
     ppDesc.usesStorageBuffer = false;
-    ppDesc.numSampledTextures = 2;
+    ppDesc.numSampledTextures = 4; // HdrColor, Bloom, AO, SceneDepth
     m_postProcessPipeline = m_device.createGraphicsPipeline(ppDesc);
 }
 
@@ -163,6 +173,7 @@ void Renderer::createScreenResources(uint32_t width, uint32_t height) {
 
     m_device.executeImmediateCompute([&](rhi::RHICommandList& cmd) {
         cmd.textureBarrier(*m_hdrColor, rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
+        cmd.textureBarrier(*m_sceneDepth, rhi::TextureLayout::Undefined, rhi::TextureLayout::DepthAttachment);
         for (uint32_t i = 0; i < BLOOM_MIP_COUNT; ++i) {
             cmd.textureBarrier(*m_bloomDownMips[i], rhi::TextureLayout::Undefined, rhi::TextureLayout::ShaderReadOnly);
             if (i < BLOOM_MIP_COUNT - 1) {
@@ -170,6 +181,8 @@ void Renderer::createScreenResources(uint32_t width, uint32_t height) {
             }
         }
     });
+
+    m_gtaoRenderer->resize(m_device, width, height);
 }
 
 float Renderer::getAspectRatio() const {
@@ -184,6 +197,7 @@ void Renderer::updateUBO(uint32_t frameIndex, const Camera& camera, const Terrai
     ubo.cameraPos = glm::vec4(camera.getPosition(), 1.0f);
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
+    m_shadowRenderer->updateCascades(camera, sky.activeLightDir);
 
     ubo.sunDir = glm::vec4(sky.activeLightDir, sky.sinElevation);
     ubo.sunColor = glm::vec4(sky.sunColor, sky.dayFactor);
@@ -201,6 +215,18 @@ void Renderer::updateUBO(uint32_t frameIndex, const Camera& camera, const Terrai
     );
     ubo.atmosphereParams = glm::vec4(config.turbidity, config.mieAnisotropy, config.sunIntensity, config.iblStrength);
 
+    const auto& lsms = m_shadowRenderer->getLightSpaceMatrices();
+    for (uint32_t c = 0; c < ShadowRenderer::CASCADE_COUNT; ++c) {
+        ubo.lightSpaceMatrices[c] = lsms[c];
+    }
+    ubo.cascadeSplits = m_shadowRenderer->getCascadeSplits();
+    ubo.shadowParams = glm::vec4(
+        config.shadowsEnabled ? config.shadowStrength : 0.0f,
+        config.shadowBias,
+        config.gtaoEnabled ? config.gtaoStrength : 0.0f,
+        config.usePBRTextures ? 1.0f : 0.0f
+    );
+
     m_uboBuffers[frameIndex]->copyFromHost(&ubo, sizeof(GlobalUBO));
 }
 
@@ -209,7 +235,6 @@ void Renderer::runBloomPasses(rhi::RHICommandList& cmd, const TerrainConfig& con
         return;
     }
 
-    // Downsample chain
     cmd.bindComputePipeline(*m_bloomDownPipeline);
     for (uint32_t i = 0; i < BLOOM_MIP_COUNT; ++i) {
         const rhi::RHITexture& srcTex = (i == 0) ? *m_hdrColor : *m_bloomDownMips[i - 1];
@@ -227,7 +252,6 @@ void Renderer::runBloomPasses(rhi::RHICommandList& cmd, const TerrainConfig& con
         cmd.textureBarrier(dstTex, rhi::TextureLayout::General, rhi::TextureLayout::ShaderReadOnly);
     }
 
-    // Upsample tent-filter chain
     cmd.bindComputePipeline(*m_bloomUpPipeline);
     for (int i = static_cast<int>(BLOOM_MIP_COUNT) - 2; i >= 0; --i) {
         const rhi::RHITexture& baseTex = *m_bloomDownMips[i];
@@ -266,7 +290,7 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
     }
 
     ImGui::SetNextWindowPos(ImVec2(14.0f, 14.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400.0f, 620.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(410.0f, 680.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.86f);
 
     if (ImGui::Begin("Terrain Engine Control Panel", &hudInfo.showHUD)) {
@@ -337,7 +361,20 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
             ImGui::Checkbox("Wireframe [F]", &config.wireframe);
         }
 
-        if (ImGui::CollapsingHeader("Lighting, Atmosphere & Post-FX", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Shadows, AO & PBR Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("4-Cascade CSM Shadows", &config.shadowsEnabled);
+            if (config.shadowsEnabled) {
+                ImGui::SliderFloat("Shadow Strength", &config.shadowStrength, 0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Shadow Bias", &config.shadowBias, 0.0002f, 0.005f, "%.4f");
+            }
+            ImGui::Checkbox("Half-Res GTAO", &config.gtaoEnabled);
+            if (config.gtaoEnabled) {
+                ImGui::SliderFloat("GTAO Strength", &config.gtaoStrength, 0.0f, 1.5f, "%.2f");
+            }
+            ImGui::Checkbox("Baked PBR Material Arrays", &config.usePBRTextures);
+        }
+
+        if (ImGui::CollapsingHeader("Lighting, Atmosphere & Post-FX")) {
             ImGui::SliderFloat("Time of Day [[ / ]]", &config.timeOfDay, 0.0f, 24.0f, "%.2f h");
             ImGui::Checkbox("Run Day/Night Cycle [T]", &config.timeCycleRunning);
             ImGui::SliderFloat("Cycle Speed", &config.timeCycleSpeed, 0.0f, 2.0f, "%.2f x");
@@ -421,7 +458,7 @@ bool Renderer::renderFrame(
 
     Atmosphere::State sky = Atmosphere::compute(config.timeOfDay);
 
-    // 1. Update Physical Sky-View LUT (Hillaire 2020)
+    // 1. Physical Sky-View LUT
     m_atmosphereRenderer->updateSkyView(
         *cmd,
         sky.sunDir,
@@ -431,7 +468,10 @@ bool Renderer::renderFrame(
         config.sunIntensity
     );
 
-    // 2. Offscreen Linear HDR Render Pass
+    // 2. 4-Cascade Shadow Atlas
+    m_shadowRenderer->renderShadows(*cmd, *m_uboBuffers[frameIndex], chunkManager, *m_foliageRenderer, frameIndex, config);
+
+    // 3. Offscreen Linear HDR Render Pass
     rhi::RenderPassDesc hdrPass{};
     hdrPass.colorTarget = m_hdrColor.get();
     hdrPass.depthTarget = m_sceneDepth.get();
@@ -451,6 +491,7 @@ bool Renderer::renderFrame(
     frame.cmd = cmd;
     frame.frameIndex = frameIndex;
     frame.globalUBO = m_uboBuffers[frameIndex].get();
+    frame.shadows = m_shadowRenderer.get();
     frame.camera = &camera;
     frame.config = &config;
     frame.time = time;
@@ -463,6 +504,9 @@ bool Renderer::renderFrame(
         : *m_solidPipeline;
     cmd->bindGraphicsPipeline(activePipeline);
     cmd->bindUniformBuffer(0, *m_uboBuffers[frameIndex]);
+    cmd->bindTexture(0, m_shadowRenderer->getShadowAtlas(), m_shadowRenderer->getShadowSampler());
+    cmd->bindTexture(1, m_materialLibrary->getAlbedoHeightArray(), m_materialLibrary->getMaterialSampler());
+    cmd->bindTexture(2, m_materialLibrary->getNormalORMArray(), m_materialLibrary->getMaterialSampler());
 
     Frustum frustum = Frustum::fromViewProj(camera.getViewProjMatrix());
     chunkManager.recordRenderCommands(*cmd, frustum, config);
@@ -477,11 +521,14 @@ bool Renderer::renderFrame(
 
     cmd->endRenderPass();
 
-    // 3. Transition HDR target & run Bloom pyramid
+    // 4. Barriers + Half-Res GTAO + Bloom Pyramid
     cmd->textureBarrier(*m_hdrColor, rhi::TextureLayout::ColorAttachment, rhi::TextureLayout::ShaderReadOnly);
+    cmd->textureBarrier(*m_sceneDepth, rhi::TextureLayout::DepthAttachment, rhi::TextureLayout::ShaderReadOnly);
+
+    m_gtaoRenderer->compute(*cmd, *m_sceneDepth, camera, frameIndex, config);
     runBloomPasses(*cmd, config);
 
-    // 4. Final Swapchain Pass: AgX/ACES Tone Mapping + Bloom Composite + ImGui
+    // 5. Final Swapchain Pass: AgX/ACES + Bloom + GTAO + ImGui
     rhi::RenderPassDesc swapPass{};
     swapPass.colorTarget = nullptr;
     swapPass.depthTarget = nullptr;
@@ -499,10 +546,17 @@ bool Renderer::renderFrame(
         ? *m_bloomUpMips[0]
         : *m_blackFallbackTex;
     cmd->bindTexture(1, bloomSrc, *m_linearSampler);
+    const rhi::RHITexture& aoSrc = (config.gtaoEnabled && config.gtaoStrength > 0.001f)
+        ? m_gtaoRenderer->getAOTexture()
+        : *m_whiteFallbackTex;
+    cmd->bindTexture(2, aoSrc, *m_linearSampler);
+    cmd->bindTexture(3, *m_sceneDepth, *m_linearSampler);
     cmd->draw(3, 1, 0);
 
     m_device.renderImGui(*cmd);
     cmd->endRenderPass();
+
+    cmd->textureBarrier(*m_sceneDepth, rhi::TextureLayout::ShaderReadOnly, rhi::TextureLayout::DepthAttachment);
 
     m_device.endFrame(window);
     return true;

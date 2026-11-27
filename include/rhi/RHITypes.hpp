@@ -180,7 +180,10 @@ struct GraphicsPipelineDesc {
 
     Format colorFormat = Format::BGRA8_SRGB;
     Format depthFormat = Format::D32F;
+    bool hasColor = true;
     bool hasDepth = true;
+    float depthBiasConstant = 0.0f;
+    float depthBiasSlope = 0.0f;
 
     bool usesUniformBuffer = true;
     bool usesStorageBuffer = false;

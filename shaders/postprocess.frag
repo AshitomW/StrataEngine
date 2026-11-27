@@ -16,10 +16,15 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 biomeParams;
     vec4 postParams;       // x: exposure, y: bloomIntensity, z: bloomThreshold, w: toneMapper
     vec4 atmosphereParams;
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
+    vec4 shadowParams;     // x: shadowStrength, y: shadowBias, z: gtaoStrength, w: enablePBRTextures
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uHdrColor;
 layout(set = 2, binding = 1) uniform sampler2D uBloomTex;
+layout(set = 2, binding = 2) uniform sampler2D uAoTex;
+layout(set = 2, binding = 3) uniform sampler2D uSceneDepth;
 
 vec3 agxDefaultContrastApprox(vec3 x) {
     vec3 x2 = x * x;
@@ -74,12 +79,14 @@ vec3 reinhard_extended(vec3 x, float whitePt) {
 void main() {
     vec3 hdr = texture(uHdrColor, inUV).rgb;
     vec3 bloom = texture(uBloomTex, inUV).rgb;
+    float depth = texture(uSceneDepth, inUV).r;
+    float ao = (depth < 0.9999) ? mix(1.0, texture(uAoTex, inUV).r, clamp(ubo.shadowParams.z, 0.0, 1.0)) : 1.0;
 
     float exposure = max(ubo.postParams.x, 0.05);
     float bloomIntensity = max(ubo.postParams.y, 0.0);
     int toneMapper = int(ubo.postParams.w + 0.5);
 
-    vec3 color = (hdr + bloom * bloomIntensity) * exposure;
+    vec3 color = (hdr * ao + bloom * bloomIntensity) * exposure;
 
     // Subtle edge vignette
     vec2 centered = inUV * 2.0 - 1.0;

@@ -155,3 +155,34 @@ void ChunkManager::recordRenderCommands(rhi::RHICommandList& cmd, const Frustum&
         }
     }
 }
+
+void ChunkManager::recordShadowCommands(rhi::RHICommandList& cmd, uint32_t cascadeIndex, const TerrainConfig& config) {
+    (void)config;
+    uint32_t minLod = (cascadeIndex <= 1) ? 0u : (cascadeIndex == 2 ? 1u : 2u);
+
+    for (uint32_t lod = minLod; lod < NUM_LOD_LEVELS; ++lod) {
+        cmd.bindIndexBuffer(*m_lodIndexBuffers[lod]);
+        uint32_t lodGridRes = getLODGridRes(lod);
+        uint32_t lodStep = getLODStep(lod);
+
+        for (const auto& chunk : m_chunks) {
+            uint32_t effectiveLod = std::max(chunk.getLOD(), minLod);
+            if (effectiveLod != lod) continue;
+
+            glm::vec2 wp = chunk.getWorldPos();
+            cmd.bindStorageBuffer(0, chunk.getSSBOBuffer());
+
+            ChunkPushConstants pc{};
+            pc.chunkOffset = glm::vec4(
+                wp.x,
+                wp.y,
+                CHUNK_CELL_SIZE,
+                static_cast<float>(CHUNK_GRID_RES)
+            );
+            pc.lodParams = glm::uvec4(lodGridRes, lodStep, lod, cascadeIndex);
+
+            cmd.pushConstants(rhi::ShaderStage::Vertex, &pc, sizeof(ChunkPushConstants));
+            cmd.drawIndexed(m_lodIndexCounts[lod], 1, 0);
+        }
+    }
+}

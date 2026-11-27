@@ -22,7 +22,14 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 biomeParams;
     vec4 postParams;
     vec4 atmosphereParams;
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
+    vec4 shadowParams;
 } ubo;
+
+layout(set = 2, binding = 0) uniform sampler2D uShadowAtlas;
+layout(set = 2, binding = 1) uniform sampler2DArray uMaterialAlbedo;
+layout(set = 2, binding = 2) uniform sampler2DArray uMaterialNormalORM;
 
 const float PI = 3.14159265359;
 
@@ -47,7 +54,6 @@ vec3 F_Schlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// Fast noise and hash primitives
 vec2 hash22(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
     p3 += dot(p3, p3.yzx + 33.33);
@@ -65,15 +71,10 @@ float gradientNoise(vec2 p) {
     vec2 f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
 
-    vec2 g00 = hash22(i + vec2(0.0, 0.0));
-    vec2 g10 = hash22(i + vec2(1.0, 0.0));
-    vec2 g01 = hash22(i + vec2(0.0, 1.0));
-    vec2 g11 = hash22(i + vec2(1.0, 1.0));
-
-    float n00 = dot(g00, f - vec2(0.0, 0.0));
-    float n10 = dot(g10, f - vec2(1.0, 0.0));
-    float n01 = dot(g01, f - vec2(0.0, 1.0));
-    float n11 = dot(g11, f - vec2(1.0, 1.0));
+    float n00 = dot(hash22(i + vec2(0.0, 0.0)), f - vec2(0.0, 0.0));
+    float n10 = dot(hash22(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float n01 = dot(hash22(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+    float n11 = dot(hash22(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
 
     return mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
 }
@@ -90,149 +91,96 @@ float fbm(vec2 p, int octaves) {
     return sum;
 }
 
-vec3 voronoi(vec2 x) {
-    vec2 n = floor(x);
-    vec2 f = fract(x);
-    vec2 mg;
-    float md = 8.0;
-    for (int j = -1; j <= 1; ++j) {
-        for (int i = -1; i <= 1; ++i) {
-            vec2 g = vec2(float(i), float(j));
-            vec2 o = hash22(n + g) * 0.5 + 0.5;
-            vec2 r = g + o - f;
-            float d = dot(r, r);
-            if (d < md) {
-                md = d;
-                mg = g;
-            }
-        }
+// Stochastic non-repeating UV tiling (2-tap rotated blend with noise mask)
+void sampleStochasticLayer(float layer, vec2 uv, out vec4 albedoH, out vec4 normORM) {
+    vec2 cell = floor(uv * 0.5);
+    float rnd = hash12(cell);
+    vec2 off = hash22(cell) * 0.5;
+    float ang = rnd * 6.2831853;
+    float c = cos(ang), s = sin(ang);
+    vec2 uvA = mat2(c, -s, s, c) * (uv - cell * 2.0) + off;
+    vec2 uvB = uv * 0.73 + vec2(0.37, 0.61);
+
+    float mask = smoothstep(-0.25, 0.25, gradientNoise(uv * 0.45));
+    vec4 a1 = texture(uMaterialAlbedo, vec3(uvA, layer));
+    vec4 a2 = texture(uMaterialAlbedo, vec3(uvB, layer));
+    vec4 n1 = texture(uMaterialNormalORM, vec3(uvA, layer));
+    vec4 n2 = texture(uMaterialNormalORM, vec3(uvB, layer));
+
+    albedoH = mix(a1, a2, mask);
+    normORM = mix(n1, n2, mask);
+}
+
+// Triplanar projection for steep cliffs
+void sampleTriplanarLayer(float layer, vec3 worldPos, vec3 N, out vec4 albedoH, out vec4 normORM) {
+    vec3 w = pow(abs(N), vec3(4.0));
+    w /= max(w.x + w.y + w.z, 1e-4);
+
+    vec2 uvX = worldPos.zy * 0.085;
+    vec2 uvY = worldPos.xz * 0.085;
+    vec2 uvZ = worldPos.xy * 0.085;
+
+    vec4 ax = texture(uMaterialAlbedo, vec3(uvX, layer));
+    vec4 ay = texture(uMaterialAlbedo, vec3(uvY, layer));
+    vec4 az = texture(uMaterialAlbedo, vec3(uvZ, layer));
+    albedoH = ax * w.x + ay * w.y + az * w.z;
+
+    vec4 nx = texture(uMaterialNormalORM, vec3(uvX, layer));
+    vec4 ny = texture(uMaterialNormalORM, vec3(uvY, layer));
+    vec4 nz = texture(uMaterialNormalORM, vec3(uvZ, layer));
+    normORM = nx * w.x + ny * w.y + nz * w.z;
+}
+
+float sampleTerrainShadow(vec3 worldPos, vec3 N, vec3 L, float viewDepth) {
+    float strength = ubo.shadowParams.x;
+    if (strength <= 0.001) return 1.0;
+
+    int cascade = 3;
+    if (viewDepth < ubo.cascadeSplits.x) cascade = 0;
+    else if (viewDepth < ubo.cascadeSplits.y) cascade = 1;
+    else if (viewDepth < ubo.cascadeSplits.z) cascade = 2;
+
+    float normalOffset = 0.08 * float(cascade + 1) * (1.0 - clamp(dot(N, L), 0.0, 1.0) * 0.5);
+    vec4 lsPos = ubo.lightSpaceMatrices[cascade] * vec4(worldPos + N * normalOffset, 1.0);
+    vec3 proj = lsPos.xyz / lsPos.w;
+    vec2 tileUV = proj.xy * 0.5 + 0.5;
+    if (any(lessThan(tileUV, vec2(0.01))) || any(greaterThan(tileUV, vec2(0.99))) || proj.z > 1.0) {
+        return 1.0;
     }
-    return vec3(sqrt(md), mg);
-}
 
-vec3 aces_film(vec3 x) {
-    float a = 2.51;
-    float b = 0.03;
-    float c = 2.43;
-    float d = 0.59;
-    float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-}
+    vec2 tileOffset = vec2(float(cascade % 2), float(cascade / 2)) * 0.5;
+    vec2 atlasUV = tileOffset + tileUV * 0.5;
+    float bias = ubo.shadowParams.y * float(cascade + 1) * (1.0 + (1.0 - max(dot(N, L), 0.0)) * 1.5);
 
-// -------------------------------------------------------------
-// Procedural Materials
-// -------------------------------------------------------------
+    vec2 texel = vec2(1.0 / 4096.0);
+    float shadow = 0.0;
 
-vec3 sampleGrassTexture(vec2 p, out vec3 normalOffset, out float roughness) {
-    // Macro variation: moisture patches & color tones
-    float macroMoisture = fbm(p * 0.04, 3);
-    float macroThatch   = fbm(p * 0.12 + vec2(14.2, 53.1), 3);
+    if (cascade <= 1) {
+        vec2 poisson[8] = vec2[8](
+            vec2(-0.707, -0.707), vec2(0.707, -0.707), vec2(-0.707, 0.707), vec2(0.707, 0.707),
+            vec2(-0.95, 0.15),   vec2(0.95, -0.15),  vec2(0.15, 0.95),   vec2(-0.15, -0.95)
+        );
+        float angle = hash12(floor(worldPos.xz * 8.0)) * 6.2831853;
+        float ca = cos(angle), sa = sin(angle);
+        mat2 rot = mat2(ca, -sa, sa, ca);
+        float spread = (cascade == 0) ? 1.8 : 2.2;
+        for (int i = 0; i < 8; ++i) {
+            vec2 suv = atlasUV + (rot * poisson[i]) * texel * spread;
+            float d = texture(uShadowAtlas, suv).r;
+            shadow += ((proj.z - bias) <= d) ? 1.0 : 0.0;
+        }
+        shadow *= 0.125;
+    } else {
+        vec2 offs[4] = vec2[4](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0));
+        for (int i = 0; i < 4; ++i) {
+            float d = texture(uShadowAtlas, atlasUV + offs[i] * texel * 1.5).r;
+            shadow += ((proj.z - bias) <= d) ? 1.0 : 0.0;
+        }
+        shadow *= 0.25;
+    }
 
-    // Meso variation: Voronoi bunchgrass clumps & soil crevices
-    vec3 vClump = voronoi(p * 0.85);
-    float clumpEdge = smoothstep(0.10, 0.45, vClump.x);
-
-    // Micro variation: blade striations & speckle
-    float blades1 = gradientNoise(p * 5.5);
-    float blades2 = gradientNoise(p * 14.0 + vec2(blades1 * 0.4));
-    float bladePattern = blades1 * 0.65 + blades2 * 0.35;
-
-    // Grass Color Palette
-    vec3 deepEmerald   = vec3(0.045, 0.150, 0.035);
-    vec3 lushGreen     = vec3(0.095, 0.280, 0.060);
-    vec3 brightClover  = vec3(0.180, 0.420, 0.085);
-    vec3 sunlitTips    = vec3(0.280, 0.480, 0.110);
-    vec3 goldenThatch  = vec3(0.380, 0.320, 0.140);
-    vec3 richLoamSoil  = vec3(0.140, 0.095, 0.055);
-
-    vec3 grassCol = mix(deepEmerald, lushGreen, smoothstep(-0.3, 0.3, macroMoisture));
-    grassCol = mix(grassCol, brightClover, smoothstep(0.1, 0.5, macroMoisture));
-    grassCol = mix(grassCol, goldenThatch, smoothstep(0.25, 0.6, macroThatch));
-    grassCol = mix(grassCol, sunlitTips, clamp(bladePattern * 0.5 + 0.2, 0.0, 0.6));
-
-    // Expose dark loam soil in crevices between grass tufts
-    grassCol = mix(richLoamSoil, grassCol, clumpEdge);
-
-    // Procedural normal perturbation (blade bumpiness)
-    float d1 = gradientNoise(p * 5.5 + vec2(0.05, 0.0)) - blades1;
-    float d2 = gradientNoise(p * 5.5 + vec2(0.0, 0.05)) - blades1;
-    normalOffset = vec3(-d1, 0.0, -d2) * 1.5;
-    roughness = 0.85;
-
-    return grassCol;
-}
-
-vec3 sampleRockTexture(vec3 worldPos, vec3 N, out vec3 normalOffset, out float roughness) {
-    vec3 absN = abs(N);
-    vec3 blendWeight = pow(absN, vec3(4.0));
-    blendWeight /= (blendWeight.x + blendWeight.y + blendWeight.z + 0.0001);
-
-    // Geological strata bands
-    float strata = sin(worldPos.y * 0.65 + fbm(worldPos.xz * 0.15, 3) * 3.5) * 0.5 + 0.5;
-
-    // Rock Triplanar noise
-    float nXY = fbm(worldPos.xy * 0.75, 4);
-    float nYZ = fbm(worldPos.yz * 0.75, 4);
-    float nXZ = fbm(worldPos.xz * 0.75, 4);
-    float rockNoise = nYZ * blendWeight.x + nXZ * blendWeight.y + nXY * blendWeight.z;
-
-    // Micro grain & chiseled fissures
-    vec3 vRock = voronoi(worldPos.xz * 0.45 + worldPos.y * 0.25);
-    float fissure = smoothstep(0.05, 0.35, vRock.x);
-
-    // Rock Colors
-    vec3 darkGranite  = vec3(0.11, 0.12, 0.14);
-    vec3 lightGranite = vec3(0.24, 0.25, 0.28);
-    vec3 rustOchre    = vec3(0.42, 0.22, 0.10);
-    vec3 quartzVein   = vec3(0.55, 0.55, 0.58);
-    vec3 cliffLichen  = vec3(0.22, 0.28, 0.12);
-
-    vec3 col = mix(darkGranite, lightGranite, strata);
-    col = mix(col, rustOchre, smoothstep(0.60, 0.85, rockNoise));
-    col = mix(col, quartzVein, smoothstep(0.85, 0.95, rockNoise));
-    col *= (0.75 + fissure * 0.35);
-
-    // Lichen on top/gentle shelves
-    float lichenMask = smoothstep(0.4, 0.7, N.y) * smoothstep(0.2, 0.6, rockNoise);
-    col = mix(col, cliffLichen, lichenMask * 0.65);
-
-    normalOffset = vec3(nXY - 0.5, 0.0, nYZ - 0.5) * 0.8;
-    roughness = 0.92;
-    return col;
-}
-
-vec3 sampleSoilAndBeach(vec2 p, float moisture, out vec3 normalOffset, out float roughness) {
-    float nPebbles = gradientNoise(p * 8.0);
-    vec3 vPebbles = voronoi(p * 2.5);
-    float pebbleShape = smoothstep(0.12, 0.35, vPebbles.x);
-
-    vec3 goldenSand   = vec3(0.64, 0.52, 0.32);
-    vec3 wetSand      = vec3(0.32, 0.25, 0.16);
-    vec3 riverGravel  = vec3(0.25, 0.22, 0.19);
-    vec3 darkLoam     = vec3(0.16, 0.11, 0.07);
-
-    vec3 col = mix(goldenSand, riverGravel, smoothstep(0.2, 0.7, nPebbles));
-    col = mix(col, darkLoam, smoothstep(0.3, 0.8, moisture));
-    col = mix(col * 0.75, col * 1.15, pebbleShape);
-
-    normalOffset = vec3(nPebbles * 0.3, 0.0, vPebbles.x * 0.3);
-    roughness = 0.80;
-    return col;
-}
-
-vec3 sampleSnowTexture(vec3 worldPos, vec3 N, out vec3 normalOffset, out float roughness) {
-    float sparkle = pow(hash12(worldPos.xz * 12.0), 12.0) * 1.8;
-    float microWave = gradientNoise(worldPos.xz * 1.5) * 0.04;
-
-    vec3 alpineSnow   = vec3(0.88, 0.92, 0.97);
-    vec3 blueShadow   = vec3(0.65, 0.76, 0.88);
-
-    vec3 col = mix(blueShadow, alpineSnow, clamp(N.y * 0.6 + 0.4 + microWave, 0.0, 1.0));
-    col += vec3(sparkle * 0.4);
-
-    normalOffset = vec3(microWave * 2.0);
-    roughness = 0.45;
-    return col;
+    float distFade = 1.0 - smoothstep(ubo.cascadeSplits.w * 0.80, ubo.cascadeSplits.w, viewDepth);
+    return mix(1.0, shadow, strength * distFade);
 }
 
 void main() {
@@ -270,89 +218,131 @@ void main() {
     float relH = (h - waterHeight) / amplitude;
     float slope = inSlope;
 
-    // Sample multi-scale material layers
-    vec3 grassNorm, rockNorm, sandNorm, snowNorm;
-    float grassRough, rockRough, sandRough, snowRough;
-
-    vec3 colGrass = sampleGrassTexture(inWorldPos.xz, grassNorm, grassRough);
-    vec3 colRock  = sampleRockTexture(inWorldPos, N, rockNorm, rockRough);
-    vec3 colSand  = sampleSoilAndBeach(inWorldPos.xz, fbm(inWorldPos.xz * 0.05, 3), sandNorm, sandRough);
-    vec3 colSnow  = sampleSnowTexture(inWorldPos, N, snowNorm, snowRough);
-
-    vec3 surfaceAlbedo;
-    vec3 normalPerturb;
-    float surfaceRoughness;
-    float isSnow = 0.0;
-
-    // Cliff rock blend threshold with noise breakup
     float slopeNoise = gradientNoise(inWorldPos.xz * 0.35) * 0.12;
     float cliffFactor = smoothstep(0.28, 0.55, slope + slopeNoise);
 
-    if (preset == 0u) { // Mountains
-        // Valley floor -> Grass -> Pine/Shrub -> Cliff Rock -> Alpine Snow
-        vec3 ground = mix(colSand, colGrass, smoothstep(-0.02, 0.08, relH));
-        ground = mix(ground, colRock, smoothstep(0.35, 0.65, relH));
-        ground = mix(ground, colRock, cliffFactor);
+    // Compute normalized biome/material layer weights before texture fetches (early-out friendly)
+    // Layers: 0=Grass, 1=Granite, 2=Sand, 3=Snow, 4=CanyonSandstone, 5=Basalt/Moss
+    float w0 = 0.0, w1 = 0.0, w2 = 0.0, w3 = 0.0, w4 = 0.0, w5 = 0.0;
+    float isSnow = 0.0;
 
+    if (preset == 0u) { // Mountains
+        float sandToGrass = smoothstep(-0.02, 0.08, relH);
+        float grassToRock = smoothstep(0.35, 0.65, relH);
+        w2 = 1.0 - sandToGrass;
+        w0 = sandToGrass * (1.0 - grassToRock) * (1.0 - cliffFactor);
+        w1 = clamp(grassToRock + cliffFactor, 0.0, 1.0) * (1.0 - w2 * 0.5);
         float snowAlt = smoothstep(0.55, 0.75, relH + slopeNoise);
         float snowSlope = 1.0 - smoothstep(0.25, 0.55, slope);
-        float snowFactor = clamp(snowAlt * snowSlope * 1.2, 0.0, 1.0);
-
-        surfaceAlbedo = mix(ground, colSnow, snowFactor);
-        normalPerturb = mix(mix(grassNorm, rockNorm, cliffFactor), snowNorm, snowFactor);
-        surfaceRoughness = mix(mix(grassRough, rockRough, cliffFactor), snowRough, snowFactor);
-        isSnow = snowFactor;
-
+        w3 = clamp(snowAlt * snowSlope * 1.2, 0.0, 1.0);
+        w0 *= (1.0 - w3);
+        w1 *= (1.0 - w3);
+        w2 *= (1.0 - w3);
+        isSnow = w3;
     } else if (preset == 1u) { // Hills
-        vec3 ground = mix(colSand, colGrass, smoothstep(-0.03, 0.06, relH));
-        ground = mix(ground, colRock, cliffFactor * 0.85);
-
-        surfaceAlbedo = ground;
-        normalPerturb = mix(grassNorm, rockNorm, cliffFactor);
-        surfaceRoughness = mix(grassRough, rockRough, cliffFactor);
-
+        float sandToGrass = smoothstep(-0.03, 0.06, relH);
+        w2 = 1.0 - sandToGrass;
+        w0 = sandToGrass * (1.0 - cliffFactor * 0.85);
+        w1 = sandToGrass * cliffFactor * 0.85;
     } else if (preset == 2u) { // Canyons
-        vec3 ground = mix(colSand, colRock, smoothstep(0.0, 0.08, relH));
-        ground = mix(ground, colGrass, smoothstep(0.70, 0.95, relH) * (1.0 - cliffFactor));
-        ground = mix(ground, colRock, cliffFactor);
-
-        surfaceAlbedo = ground;
-        normalPerturb = mix(sandNorm, rockNorm, cliffFactor);
-        surfaceRoughness = rockRough;
-
+        float sandToRock = smoothstep(0.0, 0.08, relH);
+        float topGrass = smoothstep(0.70, 0.95, relH) * (1.0 - cliffFactor);
+        w2 = 1.0 - sandToRock;
+        w0 = topGrass;
+        w4 = sandToRock * (1.0 - topGrass);
     } else if (preset == 3u) { // Islands
-        vec3 beach = colSand;
-        vec3 jungle = colGrass;
-        vec3 basalt = colRock;
-
-        vec3 ground = mix(beach, jungle, smoothstep(0.01, 0.10, relH));
-        ground = mix(ground, basalt, smoothstep(0.50, 0.90, relH));
-        ground = mix(ground, basalt, cliffFactor * 0.90);
-
-        surfaceAlbedo = ground;
-        normalPerturb = mix(mix(sandNorm, grassNorm, smoothstep(0.01, 0.10, relH)), rockNorm, cliffFactor);
-        surfaceRoughness = mix(grassRough, rockRough, cliffFactor);
-
+        float beachToJungle = smoothstep(0.01, 0.10, relH);
+        float basaltAlt = smoothstep(0.50, 0.90, relH);
+        float basaltMask = clamp(basaltAlt + cliffFactor * 0.90, 0.0, 1.0);
+        w2 = 1.0 - beachToJungle;
+        w0 = beachToJungle * (1.0 - basaltMask);
+        w5 = beachToJungle * basaltMask;
     } else { // Multi-Biome
         vec2 macroP = inWorldPos.xz * 0.00040;
         float continent = fbm(macroP, 3);
         float moisture  = fbm(macroP + vec2(12.3, 45.6), 3);
-
         float wIsland   = smoothstep(0.05, -0.20, continent);
         float wHighland = smoothstep(-0.10, 0.25, continent);
-        float wHills    = 1.0 - max(wIsland, wHighland);
         float wCanyon   = wHighland * smoothstep(-0.15, 0.20, moisture);
-        float wMountain = wHighland * (1.0 - smoothstep(-0.15, 0.20, moisture));
 
-        vec3 ground = mix(colGrass, colRock, cliffFactor);
-        ground = mix(colSand, ground, smoothstep(-0.02, 0.08, relH));
-        surfaceAlbedo = ground;
-        normalPerturb = mix(grassNorm, rockNorm, cliffFactor);
-        surfaceRoughness = mix(grassRough, rockRough, cliffFactor);
+        float sandMask = 1.0 - smoothstep(-0.02, 0.08, relH);
+        w2 = sandMask;
+        w0 = (1.0 - sandMask) * (1.0 - cliffFactor) * (1.0 - wCanyon * 0.7);
+        w1 = (1.0 - sandMask) * cliffFactor * (1.0 - wCanyon);
+        w4 = (1.0 - sandMask) * wCanyon * 0.85;
+        w5 = (1.0 - sandMask) * wIsland * cliffFactor * 0.5;
     }
 
-    // Apply micro-normal bump to mesh normal
-    vec3 finalNormal = normalize(N + normalPerturb * 0.40);
+    vec3 surfaceAlbedo = vec3(0.0);
+    vec3 tangentNorm = vec3(0.0, 0.0, 1.0);
+    float surfaceRoughness = 0.85;
+    float bakedAO = 1.0;
+
+    if (ubo.shadowParams.w > 0.5) {
+        vec2 uv = inWorldPos.xz * 0.11;
+        float weights[6] = float[6](w0, w1, w2, w3, w4, w5);
+        vec4 albedos[6];
+        vec4 norms[6];
+        float maxH = -1.0;
+
+        for (int i = 0; i < 6; ++i) {
+            if (weights[i] > 0.01) {
+                if (slope > 0.35 && (i == 1 || i == 4 || i == 5)) {
+                    sampleTriplanarLayer(float(i), inWorldPos, N, albedos[i], norms[i]);
+                } else {
+                    sampleStochasticLayer(float(i), uv, albedos[i], norms[i]);
+                }
+                maxH = max(maxH, albedos[i].a + weights[i]);
+            } else {
+                albedos[i] = vec4(0.0);
+                norms[i] = vec4(0.5, 0.5, 0.85, 1.0);
+            }
+        }
+
+        // Height-based splat blending
+        float blendDepth = 0.22;
+        float hThreshold = maxH - blendDepth;
+        float sumW = 0.0;
+        vec3 accAlbedo = vec3(0.0);
+        vec2 accNormXY = vec2(0.0);
+        float accRough = 0.0;
+        float accAO = 0.0;
+
+        for (int i = 0; i < 6; ++i) {
+            if (weights[i] > 0.01) {
+                float hw = max(albedos[i].a + weights[i] - hThreshold, 0.0);
+                hw = hw * weights[i];
+                sumW += hw;
+                accAlbedo += albedos[i].rgb * hw;
+                accNormXY += (norms[i].xy * 2.0 - 1.0) * hw;
+                accRough += norms[i].z * hw;
+                accAO += norms[i].w * hw;
+            }
+        }
+
+        float invW = 1.0 / max(sumW, 1e-4);
+        surfaceAlbedo = accAlbedo * invW;
+        tangentNorm = normalize(vec3(accNormXY * invW * 0.65, 1.0));
+        surfaceRoughness = accRough * invW;
+        bakedAO = accAO * invW;
+    } else {
+        // Fallback flat-ish procedural palette when PBR texture toggle is off
+        vec3 colGrass = vec3(0.11, 0.29, 0.06);
+        vec3 colRock  = vec3(0.20, 0.21, 0.23);
+        vec3 colSand  = vec3(0.58, 0.47, 0.29);
+        vec3 colSnow  = vec3(0.88, 0.92, 0.97);
+        vec3 colClay  = vec3(0.50, 0.22, 0.11);
+        vec3 colBasalt = vec3(0.10, 0.11, 0.12);
+        float wSum = max(w0 + w1 + w2 + w3 + w4 + w5, 1e-4);
+        surfaceAlbedo = (colGrass * w0 + colRock * w1 + colSand * w2 + colSnow * w3 + colClay * w4 + colBasalt * w5) / wSum;
+        surfaceRoughness = mix(0.85, 0.40, isSnow);
+    }
+
+    // Transform tangent normal to world space (RNM-style perturbation on terrain heightfield normal)
+    vec3 upRef = (abs(N.y) < 0.99) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(upRef, N));
+    vec3 B = cross(N, T);
+    vec3 finalNormal = normalize(T * tangentNorm.x + B * tangentNorm.y + N * tangentNorm.z);
     float roughness = clamp(surfaceRoughness, 0.08, 0.98);
 
     // Underwater and Shoreline Wetness
@@ -369,7 +359,10 @@ void main() {
         roughness = mix(roughness, 0.12, wetness * 0.85);
     }
 
-    // Cook-Torrance PBR Direct Lighting
+    // Cook-Torrance PBR Direct Lighting + 4-Cascade CSM Shadow
+    float viewDepth = max(-(ubo.view * vec4(inWorldPos, 1.0)).z, 0.0);
+    float shadow = sampleTerrainShadow(inWorldPos, N, L, viewDepth);
+
     float NdotL = max(dot(finalNormal, L), 0.0);
     float NdotV = max(dot(finalNormal, V), 0.001);
     float NdotH = max(dot(finalNormal, H), 0.0);
@@ -387,11 +380,11 @@ void main() {
 
     float sunIntensity = ubo.atmosphereParams.z;
     vec3 sunRadiance = ubo.sunColor.rgb * sunIntensity;
-    vec3 directPBR = (kD * (surfaceAlbedo / PI) + specularBRDF) * sunRadiance * NdotL;
+    vec3 directPBR = (kD * (surfaceAlbedo / PI) + specularBRDF) * sunRadiance * NdotL * shadow;
 
-    // Soft wrap fill for organic grass/snow bounce
-    float wrapFill = pow(clamp(dot(finalNormal, L) * 0.35 + 0.65, 0.0, 1.0), 2.0) * 0.08;
-    directPBR += surfaceAlbedo * sunRadiance * wrapFill;
+    // Soft wrap fill
+    float wrapFill = pow(clamp(dot(finalNormal, L) * 0.35 + 0.65, 0.0, 1.0), 2.0) * 0.06;
+    directPBR += surfaceAlbedo * sunRadiance * wrapFill * mix(0.25, 1.0, shadow);
 
     // Caustics on submerged floor
     if (h < waterHeight && L.y > -0.05) {
@@ -402,13 +395,13 @@ void main() {
         float c2 = abs(cos(cUV2.x * 2.7 + cos(cUV2.y * 3.2 - timeVal)));
         float caustic = pow(c1 * c2, 1.6) * 1.8;
         float depthAtten = clamp(1.0 - (waterHeight - h) * 0.12, 0.0, 1.0);
-        directPBR += surfaceAlbedo * sunRadiance * caustic * depthAtten * 0.35 * max(L.y, 0.0);
+        directPBR += surfaceAlbedo * sunRadiance * caustic * depthAtten * 0.35 * max(L.y, 0.0) * shadow;
     }
 
     // Hemisphere Sky IBL & Ambient Occlusion
     float slopeAO = clamp(1.0 - inSlope * 0.25, 0.55, 1.0);
     float valleyAO = clamp(smoothstep(-10.0, 25.0, inHeight - waterHeight) * 0.25 + 0.75, 0.60, 1.0);
-    float ao = slopeAO * valleyAO;
+    float ao = slopeAO * valleyAO * bakedAO;
 
     float iblStrength = ubo.atmosphereParams.w;
     vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a * 1.65;
@@ -446,7 +439,5 @@ void main() {
     vec3 fogColor = horizonAtmosphere + ubo.sunColor.rgb * sunGlow * sunIntensity * 0.45 * ubo.sunColor.a;
 
     vec3 finalColor = mix(litColor, fogColor, fogFactor);
-
-    // Output linear HDR (tone mapping & sRGB encoding happen in postprocess.frag)
     outColor = vec4(max(finalColor, vec3(0.0)), 1.0);
 }

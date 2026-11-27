@@ -1,4 +1,5 @@
 #include "renderer/WaterRenderer.hpp"
+#include "renderer/ShadowRenderer.hpp"
 #include <cmath>
 #include <vector>
 
@@ -78,6 +79,7 @@ void WaterRenderer::createPipeline(rhi::RHIDevice& device) {
     desc.hasDepth = true;
     desc.usesUniformBuffer = true;
     desc.usesStorageBuffer = false;
+    desc.numSampledTextures = 1;
     desc.pushConstantSize = sizeof(WaterPushConstants);
     desc.pushConstantStages = rhi::ShaderStage::Vertex | rhi::ShaderStage::Fragment;
 
@@ -91,6 +93,9 @@ void WaterRenderer::recordRenderCommands(const FrameContext& frame) {
     rhi::RHICommandList& cmd = *frame.cmd;
     cmd.bindGraphicsPipeline(*m_pipeline);
     cmd.bindUniformBuffer(0, *frame.globalUBO);
+    if (frame.shadows) {
+        cmd.bindTexture(0, frame.shadows->getShadowAtlas(), frame.shadows->getShadowSampler());
+    }
 
     const uint32_t RES = EngineConstants::Water::WATER_GRID_RES;
     const float GRID_SPAN = 2400.0f;

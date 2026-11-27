@@ -16,6 +16,9 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 biomeParams;
     vec4 postParams;
     vec4 atmosphereParams;
+    mat4 lightSpaceMatrices[4];
+    vec4 cascadeSplits;
+    vec4 shadowParams;
 } ubo;
 
 layout(set = 2, binding = 0) uniform sampler2D uSkyViewLUT;
