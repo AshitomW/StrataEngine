@@ -164,13 +164,40 @@ void FoliageRenderer::createModels(rhi::RHIDevice& device) {
     }
     m_modelMeshes[6].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[6].firstIndex;
 
-    // 7: Savanna Flat-Topped Acacia Tree
+    // 7: Tall Segmented Bamboo Cluster
     m_modelMeshes[7].firstIndex = static_cast<uint32_t>(indices.size());
-    addTapered(0.45f, 0.24f, -1.2f, 4.4f, 0.25f, 0.0f, 6, glm::vec3(0.24f, 0.17f, 0.11f));
-    addTapered(0.20f, 0.11f, 3.8f, 6.4f, 1.9f, 0.6f, 5, glm::vec3(0.24f, 0.17f, 0.11f));
-    addTapered(0.18f, 0.10f, 4.0f, 6.6f, -1.6f, -0.5f, 5, glm::vec3(0.24f, 0.17f, 0.11f));
-    addCone(5.9f, 6.9f, 4.6f, 0.2f, 0.0f, 10, glm::vec3(0.14f, 0.21f, 0.06f), glm::vec3(0.24f, 0.30f, 0.09f));
-    addCone(6.5f, 7.4f, 3.4f, 0.8f, 0.3f, 9, glm::vec3(0.16f, 0.23f, 0.07f), glm::vec3(0.28f, 0.33f, 0.10f));
+    glm::vec3 bambooStalk(0.20f, 0.34f, 0.09f);
+    glm::vec3 bambooLeaf(0.08f, 0.28f, 0.06f);
+    glm::vec3 bambooTip(0.16f, 0.38f, 0.10f);
+    const float culmOffsets[5][4] = {
+        { 0.0f,  0.0f,  0.35f,  0.20f},
+        { 0.65f, 0.30f, 0.70f, -0.15f},
+        {-0.55f, 0.45f,-0.45f,  0.55f},
+        { 0.25f,-0.60f,-0.15f, -0.70f},
+        {-0.40f,-0.45f, 0.20f, -0.50f}
+    };
+    const float culmHeights[5] = { 10.5f, 9.2f, 8.6f, 9.8f, 7.8f };
+    for (int c = 0; c < 5; ++c) {
+        float bx = culmOffsets[c][0], bz = culmOffsets[c][1];
+        float tx = culmOffsets[c][2], tz = culmOffsets[c][3];
+        float h = culmHeights[c];
+        // Build vertical segmented culm from (bx, 0, bz) to (tx, h, tz)
+        uint32_t cBase = static_cast<uint32_t>(vertices.size());
+        const int sides = 5;
+        for (int i = 0; i < sides; ++i) {
+            float a = static_cast<float>(i) / static_cast<float>(sides) * 2.0f * 3.14159f;
+            glm::vec3 n(std::cos(a), 0.1f, std::sin(a));
+            vertices.push_back({glm::vec3(bx + std::cos(a) * 0.13f, -0.6f, bz + std::sin(a) * 0.13f), glm::normalize(n), bambooStalk * 0.8f});
+            vertices.push_back({glm::vec3(tx + std::cos(a) * 0.08f, h, tz + std::sin(a) * 0.08f), glm::normalize(n), bambooStalk});
+        }
+        for (int i = 0; i < sides; ++i) {
+            int next = (i + 1) % sides;
+            indices.push_back(cBase + i * 2); indices.push_back(cBase + i * 2 + 1); indices.push_back(cBase + next * 2);
+            indices.push_back(cBase + next * 2); indices.push_back(cBase + i * 2 + 1); indices.push_back(cBase + next * 2 + 1);
+        }
+        addCone(h * 0.65f, h + 1.1f, 1.35f, tx, tz, 6, bambooLeaf, bambooTip);
+        addCone(h * 0.48f, h * 0.85f, 1.15f, (bx + tx) * 0.5f, (bz + tz) * 0.5f, 6, bambooLeaf * 0.9f, bambooTip);
+    }
     m_modelMeshes[7].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[7].firstIndex;
 
     size_t vSize = sizeof(FoliageVertex) * vertices.size();
@@ -258,6 +285,7 @@ void FoliageRenderer::generateScatterForChunk(
         uint32_t objType = 0;
         float prob = distProb(gen);
         float scale = distScale(gen);
+        float autumnFlag = 0.0f;
 
         if (effectiveBiome == 0u) {
 
@@ -318,10 +346,19 @@ void FoliageRenderer::generateScatterForChunk(
                 objType = 4;
                 scale *= 0.85f;
             }
-        } else if (effectiveBiome == 5u) { // Volcanic Caldera
-            if (relH < 0.12f || slope > 0.55f || prob < 0.72f) continue;
-            objType = 4;
-            scale *= 1.15f;
+        } else if (effectiveBiome == 5u) { // Alpine Emerald Valley
+            if (relH > 0.52f || slope > 0.46f) {
+                objType = 4;
+                if (prob < 0.65f) continue;
+            } else if (prob < 0.48f) {
+                objType = 0; // Pine
+                scale *= 1.12f;
+            } else if (prob < 0.85f) {
+                objType = 6; // Valley grass
+                scale *= 1.35f;
+            } else {
+                objType = 4;
+            }
         } else if (effectiveBiome == 6u) { // Arctic Tundra
             if (slope > 0.45f) {
                 objType = 4;
@@ -335,35 +372,46 @@ void FoliageRenderer::generateScatterForChunk(
             } else {
                 continue;
             }
-        } else if (effectiveBiome == 7u) { // Golden Desert Dunes
-            if (slope > 0.40f || prob > 0.35f) continue;
-            if (prob < 0.18f) {
-                objType = 3;
+        } else if (effectiveBiome == 7u) { // Autumn Highlands
+            if (slope > 0.46f || relH > 0.68f) {
+                objType = 4;
+                if (prob < 0.55f) continue;
+            } else if (prob < 0.44f) {
+                objType = 1; // Autumn Broadleaf Oak
+                autumnFlag = 1.0f;
                 scale *= 1.10f;
+            } else if (prob < 0.56f) {
+                objType = 0; // Evergreen Pine contrast
+            } else if (prob < 0.88f) {
+                objType = 6; // Heather/grass
+                autumnFlag = 1.0f;
+                scale *= 1.30f;
             } else {
-                objType = 5;
-                scale *= 0.90f;
+                objType = 4;
+                scale *= 0.85f;
             }
-        } else { // Savanna & Badlands (8u)
-            if (slope > 0.42f) {
-                objType = 5;
-                if (prob < 0.60f) continue;
-            } else if (prob < 0.22f && relH < 0.38f) {
-                objType = 7; // Acacia
-                scale *= 1.15f;
-            } else if (prob < 0.82f) {
-                objType = 6; // Savanna grass
+        } else { // Karst Peaks & Bamboo (8u)
+            if (slope > 0.44f || relH > 0.40f) {
+                if (prob < 0.72f) continue;
+                objType = 4;
+                scale *= 0.85f;
+            } else if (prob < 0.45f) {
+                objType = 7; // Bamboo Cluster
+                scale *= 1.10f;
+            } else if (prob < 0.60f) {
+                objType = 1; // Broadleaf
+            } else if (prob < 0.88f) {
+                objType = 6;
                 scale *= 1.35f;
             } else {
-                objType = 5;
-                scale *= 0.80f;
+                objType = 4;
             }
         }
 
         FoliageInstance inst{};
 
         inst.posScale = glm::vec4(worldXZ.x, height - 0.15f, worldXZ.y, scale);
-        inst.params = glm::vec4(distRot(gen), static_cast<float>(objType), distVar(gen), 0.0f);
+        inst.params = glm::vec4(distRot(gen), static_cast<float>(objType), distVar(gen), autumnFlag);
         outInstances.push_back(inst);
     }
 }

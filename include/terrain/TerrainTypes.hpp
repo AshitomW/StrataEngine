@@ -146,20 +146,20 @@ struct TerrainConfig {
         applyPreset(EngineConstants::Presets::MULTIBIOME);
     }
 
-    void applyVolcanic() {
-        applyPreset(EngineConstants::Presets::VOLCANIC);
+    void applyAlpineValley() {
+        applyPreset(EngineConstants::Presets::ALPINE_VALLEY);
     }
 
     void applyTundra() {
         applyPreset(EngineConstants::Presets::TUNDRA);
     }
 
-    void applyDesert() {
-        applyPreset(EngineConstants::Presets::DESERT);
+    void applyAutumnHighlands() {
+        applyPreset(EngineConstants::Presets::AUTUMN_HIGHLANDS);
     }
 
-    void applySavanna() {
-        applyPreset(EngineConstants::Presets::SAVANNA);
+    void applyKarstPeaks() {
+        applyPreset(EngineConstants::Presets::KARST_PEAKS);
     }
 
     bool showWater = true;

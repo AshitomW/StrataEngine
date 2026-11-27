@@ -90,10 +90,10 @@ namespace Presets {
     inline const BiomePresetDef CANYONS    = {2,  80.0f, 1.0f, 1.00f, 1.50f, -10.0f};
     inline const BiomePresetDef ISLANDS    = {3,  60.0f, 1.0f, 0.65f, 1.30f,   8.0f};
     inline const BiomePresetDef MULTIBIOME = {4, 100.0f, 1.0f, 0.80f, 1.60f,   0.0f};
-    inline const BiomePresetDef VOLCANIC   = {5, 110.0f, 1.05f, 0.90f, 1.75f,  2.0f};
-    inline const BiomePresetDef TUNDRA     = {6,  65.0f, 0.95f, 0.55f, 1.35f,  4.0f};
-    inline const BiomePresetDef DESERT     = {7,  52.0f, 0.90f, 0.65f, 1.15f, -15.0f};
-    inline const BiomePresetDef SAVANNA    = {8,  45.0f, 0.85f, 0.50f, 1.00f, -10.0f};
+    inline const BiomePresetDef ALPINE_VALLEY    = {5, 120.0f, 0.95f, 0.80f, 1.85f,  4.0f};
+    inline const BiomePresetDef TUNDRA           = {6,  65.0f, 0.95f, 0.55f, 1.35f,  4.0f};
+    inline const BiomePresetDef AUTUMN_HIGHLANDS = {7,  68.0f, 1.00f, 0.60f, 1.30f,  2.0f};
+    inline const BiomePresetDef KARST_PEAKS      = {8, 105.0f, 1.15f, 0.65f, 1.90f,  3.0f};
 }
 
 }

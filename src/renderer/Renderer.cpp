@@ -345,8 +345,8 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
         if (ImGui::CollapsingHeader("Terrain & LOD", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* presetItems[] = {
                 "Mountains", "Rolling Hills", "Deep Canyons", "Tropical Islands",
-                "Multi-Biome World", "Volcanic Caldera", "Arctic Tundra",
-                "Golden Desert Dunes", "Savanna & Badlands"
+                "Multi-Biome World", "Alpine Emerald Valley", "Arctic Tundra",
+                "Autumn Highlands", "Karst Peaks & Bamboo"
             };
             int presetIdx = static_cast<int>(std::min(config.presetType, 8u));
             if (ImGui::Combo("Preset [1-9]", &presetIdx, presetItems, IM_ARRAYSIZE(presetItems))) {
@@ -356,10 +356,10 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
                     case 2: config.applyCanyons(); hudInfo.presetName = "Deep Canyons"; break;
                     case 3: config.applyIslands(); hudInfo.presetName = "Tropical Islands"; break;
                     case 4: config.applyMultiBiome(); hudInfo.presetName = "Multi-Biome World"; break;
-                    case 5: config.applyVolcanic(); hudInfo.presetName = "Volcanic Caldera"; break;
+                    case 5: config.applyAlpineValley(); hudInfo.presetName = "Alpine Emerald Valley"; break;
                     case 6: config.applyTundra(); hudInfo.presetName = "Arctic Tundra"; break;
-                    case 7: config.applyDesert(); hudInfo.presetName = "Golden Desert"; break;
-                    case 8: config.applySavanna(); hudInfo.presetName = "Savanna & Badlands"; break;
+                    case 7: config.applyAutumnHighlands(); hudInfo.presetName = "Autumn Highlands"; break;
+                    case 8: config.applyKarstPeaks(); hudInfo.presetName = "Karst Peaks & Bamboo"; break;
                 }
                 needsRegen = true;
             }

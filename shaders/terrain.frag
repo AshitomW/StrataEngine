@@ -259,27 +259,39 @@ void main() {
         w2 = 1.0 - beachToJungle;
         w0 = beachToJungle * (1.0 - basaltMask);
         w5 = beachToJungle * basaltMask;
-    } else if (preset == 5u) { // Volcanic Caldera
-        float ashSlope = smoothstep(0.15, 0.55, relH);
-        w5 = clamp(0.70 + cliffFactor * 0.30, 0.0, 1.0);
-        w1 = ashSlope * (1.0 - cliffFactor) * 0.35;
-        w5 *= (1.0 - w1 * 0.5);
+    } else if (preset == 5u) { // Alpine Emerald Valley
+        float sandToGrass = smoothstep(-0.01, 0.07, relH);
+        float grassToRock = smoothstep(0.28, 0.52, relH);
+        w2 = 1.0 - sandToGrass;
+        w0 = sandToGrass * (1.0 - grassToRock) * (1.0 - cliffFactor);
+        w1 = clamp(grassToRock + cliffFactor, 0.0, 1.0) * (1.0 - w2 * 0.5);
+        float snowAlt = smoothstep(0.50, 0.72, relH + slopeNoise);
+        float snowSlope = 1.0 - smoothstep(0.26, 0.56, slope);
+        w3 = clamp(snowAlt * snowSlope * 1.2, 0.0, 1.0);
+        w0 *= (1.0 - w3);
+        w1 *= (1.0 - w3);
+        w2 *= (1.0 - w3);
+        isSnow = w3;
     } else if (preset == 6u) { // Arctic Tundra & Fjords
         float snowMask = smoothstep(0.28, 0.62, relH + slopeNoise * 1.4) * (1.0 - smoothstep(0.32, 0.62, slope));
         w1 = cliffFactor * 0.85;
         w7 = (1.0 - cliffFactor * 0.85) * (1.0 - snowMask);
         w3 = (1.0 - cliffFactor * 0.85) * snowMask;
         isSnow = w3;
-    } else if (preset == 7u) { // Golden Desert Dunes
-        float rockMask = smoothstep(0.45, 0.78, relH) + cliffFactor * 0.85;
-        rockMask = clamp(rockMask, 0.0, 1.0);
-        w2 = 1.0 - rockMask;
-        w4 = rockMask;
-    } else if (preset == 8u) { // Savanna & Badlands
-        float plateau = smoothstep(0.36, 0.54, relH) + cliffFactor * 0.90;
-        plateau = clamp(plateau, 0.0, 1.0);
-        w6 = 1.0 - plateau;
-        w4 = plateau;
+    } else if (preset == 7u) { // Autumn Highlands
+        float shoreSand = 1.0 - smoothstep(-0.02, 0.06, relH);
+        float rockMask = clamp(smoothstep(0.55, 0.85, relH) + cliffFactor * 0.90, 0.0, 1.0);
+        float autPatch = smoothstep(-0.20, 0.35, fbm(inWorldPos.xz * 0.018, 2));
+        w2 = shoreSand;
+        w1 = (1.0 - shoreSand) * rockMask;
+        w6 = (1.0 - shoreSand) * (1.0 - rockMask) * mix(0.45, 0.95, autPatch);
+        w0 = (1.0 - shoreSand) * (1.0 - rockMask) * (1.0 - mix(0.45, 0.95, autPatch));
+    } else if (preset == 8u) { // Karst Peaks & Bamboo
+        float sandMask = 1.0 - smoothstep(-0.02, 0.06, relH);
+        float karstWall = smoothstep(0.24, 0.50, slope + slopeNoise * 0.8);
+        w2 = sandMask;
+        w5 = (1.0 - sandMask) * karstWall;
+        w0 = (1.0 - sandMask) * (1.0 - karstWall);
     } else { // Multi-Biome World
         vec2 macroP = inWorldPos.xz * 0.00045;
         float continent = fbm(macroP, 3);
@@ -289,17 +301,18 @@ void main() {
         float wHighland = smoothstep(-0.10, 0.25, continent);
         float wMid      = 1.0 - max(wIsland, wHighland);
         float coldMask  = smoothstep(0.05, -0.22, temp);
-        float aridMask  = smoothstep(-0.05, 0.22, moisture) * smoothstep(-0.05, 0.20, temp);
+        float humidMask = smoothstep(-0.05, 0.22, moisture);
 
         float sandMask = 1.0 - smoothstep(-0.02, 0.08, relH);
-        w2 = clamp(sandMask + wHighland * aridMask * 0.5 * (1.0 - cliffFactor), 0.0, 1.0);
+        w2 = sandMask;
         float rem = 1.0 - w2;
         w0 = rem * (wMid * (1.0 - smoothstep(-0.05, 0.20, temp)) + wIsland) * (1.0 - cliffFactor);
         w6 = rem * wMid * smoothstep(-0.05, 0.20, temp) * (1.0 - cliffFactor);
         w7 = rem * wHighland * coldMask * (1.0 - cliffFactor * 0.8);
-        w1 = rem * cliffFactor * (1.0 - aridMask);
-        w4 = rem * wHighland * (1.0 - coldMask) * aridMask;
-        w5 = rem * wIsland * cliffFactor * 0.6;
+        w5 = rem * wHighland * (1.0 - coldMask) * humidMask * cliffFactor;
+        w0 += rem * wHighland * (1.0 - coldMask) * humidMask * (1.0 - cliffFactor);
+        w1 = rem * cliffFactor * (1.0 - humidMask);
+        w4 = rem * wHighland * (1.0 - coldMask) * (1.0 - humidMask) * 0.45;
         isSnow = smoothstep(0.55, 0.80, relH) * coldMask * (1.0 - slope * 0.6);
         w3 = isSnow * 0.85;
     }
@@ -490,14 +503,6 @@ void main() {
     vec3 ambientPBR = (surfaceAlbedo * (1.0 - F_ibl) * irradiance + envSpec * F_ibl) * ao;
 
     vec3 litColor = ambientPBR + directPBR;
-
-    // Volcanic caldera glowing magma cracks in low basins
-    if (preset == 5u && relH < 0.09 && slope < 0.35) {
-        float seam = smoothstep(0.04, 0.0, abs(fbm(inWorldPos.xz * 0.14 + timeVal * 0.03, 2)));
-        float basinGlow = smoothstep(0.09, -0.04, relH) * (0.45 + 0.55 * seam);
-        float pulse = sin(timeVal * 2.2 + inWorldPos.x * 0.15) * 0.15 + 0.85;
-        litColor += vec3(3.2, 0.65, 0.08) * basinGlow * pulse;
-    }
 
     // Atmospheric Distance Fog & Valley Mist (modulated by Weather)
     float dist = length(ubo.cameraPos.xyz - inWorldPos);

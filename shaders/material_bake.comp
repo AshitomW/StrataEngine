@@ -145,38 +145,39 @@ void evaluateLayer(int layer, vec2 uv, out vec3 albedo, out float height, out fl
         roughness = 0.86;
         ao = mix(0.55, 1.0, crack);
     } else if (layer == 5) {
-        // Layer 5: Polygonal Volcanic Basalt & Obsidian Cracks
-        float w1 = tileWorley(uv, 8, 601u);
-        float cell = smoothstep(0.05, 0.36, w1);
-        float micro = tileFbm(uv, 24, 4, 602u);
-        float pores = tileNoise(uv, 64, 603u);
-        vec3 basalt = vec3(0.055, 0.060, 0.068);
-        vec3 ash    = vec3(0.145, 0.148, 0.160);
-        vec3 sulfur = vec3(0.240, 0.165, 0.075);
+        // Layer 5: Mossy Karst Limestone Cliffs & Damp Crevices
+        float streak = sin(uv.x * 6.2831853 * 6.0 + tileFbm(uv, 4, 3, 601u) * 3.0) * 0.5 + 0.5;
+        float cell = smoothstep(0.06, 0.38, tileWorley(uv, 9, 602u));
+        float micro = tileFbm(uv, 20, 4, 603u);
+        vec3 limestone = vec3(0.32, 0.33, 0.31);
+        vec3 warmStone = vec3(0.42, 0.39, 0.34);
+        vec3 karstMoss = vec3(0.075, 0.195, 0.055);
 
-        albedo = mix(basalt, ash, clamp(micro + 0.5, 0.0, 1.0));
-        albedo = mix(albedo, sulfur, smoothstep(0.25, 0.48, micro) * 0.28);
-        albedo *= (0.62 + 0.42 * cell + pores * 0.06);
-        height = clamp(cell * 0.72 + micro * 0.20 + pores * 0.08, 0.0, 1.0);
-        roughness = mix(0.54, 0.90, cell);
-        ao = mix(0.42, 1.0, cell);
+        albedo = mix(limestone, warmStone, clamp(streak * 0.6 + micro * 0.4 + 0.3, 0.0, 1.0));
+        albedo = mix(albedo, karstMoss, smoothstep(0.18, 0.45, micro) * 0.58);
+        albedo *= (0.68 + 0.36 * cell);
+        height = clamp(cell * 0.68 + micro * 0.22 + streak * 0.10, 0.0, 1.0);
+        roughness = mix(0.65, 0.90, cell);
+        ao = mix(0.45, 1.0, cell);
     } else if (layer == 6) {
-        // Layer 6: Golden Savanna Earth & Dry Steppe Grass
+        // Layer 6: Autumn Forest Floor, Fallen Leaves & Heather
         float patches = tileFbm(uv, 4, 3, 701u);
-        float thatch  = tileWorley(uv, 12, 702u);
-        float blades  = tileNoise(uv, 48, 703u) * 0.6 + tileNoise(uv, 96, 704u) * 0.4;
+        float leafBed = tileWorley(uv, 14, 702u);
+        float detail  = tileNoise(uv, 64, 703u) * 0.6 + tileNoise(uv, 128, 704u) * 0.4;
 
-        vec3 redEarth = vec3(0.32, 0.19, 0.10);
-        vec3 dryStraw = vec3(0.48, 0.39, 0.15);
-        vec3 sageOlive = vec3(0.26, 0.30, 0.12);
+        vec3 richLoam   = vec3(0.14, 0.09, 0.05);
+        vec3 goldLeaves = vec3(0.56, 0.34, 0.08);
+        vec3 russetRed  = vec3(0.44, 0.15, 0.06);
+        vec3 mossGreen  = vec3(0.10, 0.19, 0.06);
 
-        float grassMask = smoothstep(0.12, 0.48, thatch);
-        albedo = mix(sageOlive, dryStraw, smoothstep(-0.30, 0.30, patches));
-        albedo = mix(redEarth, albedo, grassMask);
-        albedo *= (0.86 + blades * 0.18);
-        height = clamp(0.25 + grassMask * 0.55 + blades * 0.20, 0.0, 1.0);
-        roughness = mix(0.92, 0.80, grassMask);
-        ao = mix(0.60, 1.0, grassMask);
+        float leafMask = smoothstep(0.14, 0.46, leafBed);
+        vec3 leafCol = mix(russetRed, goldLeaves, smoothstep(-0.25, 0.28, patches));
+        albedo = mix(mossGreen, leafCol, smoothstep(-0.35, 0.15, patches));
+        albedo = mix(richLoam, albedo, leafMask);
+        albedo *= (0.84 + detail * 0.22);
+        height = clamp(0.22 + leafMask * 0.58 + detail * 0.20, 0.0, 1.0);
+        roughness = mix(0.92, 0.78, leafMask);
+        ao = mix(0.55, 1.0, leafMask);
     } else {
         // Layer 7: Arctic Permafrost, Autumn Moss & Lichen
         float macro = tileFbm(uv, 4, 4, 801u);
