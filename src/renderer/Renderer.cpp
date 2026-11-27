@@ -330,7 +330,7 @@ void Renderer::drawImGui(const Camera& camera, ChunkManager& chunkManager, Terra
     ImGui::SetNextWindowSize(ImVec2(410.0f, 680.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.86f);
 
-    if (ImGui::Begin("Terrain Engine Control Panel", &hudInfo.showHUD)) {
+    if (ImGui::Begin("StrataEngine Control Panel", &hudInfo.showHUD)) {
         if (ImGui::CollapsingHeader("Engine & Stats", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("Backend: %s", m_device.getBackendName());
             ImGui::Text("GPU: %s", m_device.getDeviceName().c_str());

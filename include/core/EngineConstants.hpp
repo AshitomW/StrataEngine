@@ -8,7 +8,7 @@ namespace EngineConstants {
 namespace Window {
     inline constexpr int DEFAULT_WIDTH = 1280;
     inline constexpr int DEFAULT_HEIGHT = 720;
-    inline constexpr const char* TITLE = "Vulkan Procedural Terrain Engine";
+    inline constexpr const char* TITLE = "StrataEngine";
 }
 
 namespace Camera {

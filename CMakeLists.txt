@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(vulkan_terrain LANGUAGES CXX)
+project(StrataEngine LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -122,14 +122,14 @@ if(ENABLE_METAL)
     list(APPEND IMGUI_SOURCES ${IMGUI_DIR}/backends/imgui_impl_metal.mm)
 endif()
 
-add_library(terrain_imgui STATIC ${IMGUI_SOURCES})
-target_include_directories(terrain_imgui PUBLIC
+add_library(strata_imgui STATIC ${IMGUI_SOURCES})
+target_include_directories(strata_imgui PUBLIC
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )
-target_link_libraries(terrain_imgui PUBLIC glfw)
+target_link_libraries(strata_imgui PUBLIC glfw)
 if(ENABLE_VULKAN)
-    target_link_libraries(terrain_imgui PUBLIC Vulkan::Vulkan)
+    target_link_libraries(strata_imgui PUBLIC Vulkan::Vulkan)
 endif()
 if(ENABLE_METAL)
     set_source_files_properties(${IMGUI_DIR}/backends/imgui_impl_metal.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
@@ -175,23 +175,23 @@ if(ENABLE_METAL)
     set_source_files_properties(src/rhi/metal/MetalDevice.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 endif()
 
-add_executable(terrain ${ENGINE_SOURCES})
-add_dependencies(terrain shaders)
+add_executable(strata ${ENGINE_SOURCES})
+add_dependencies(strata shaders)
 
-target_include_directories(terrain PRIVATE
+target_include_directories(strata PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GLM_INCLUDE_DIR}
 )
 
 if(ENABLE_VULKAN)
-    target_compile_definitions(terrain PRIVATE TERRAIN_ENABLE_VULKAN=1)
-    target_link_libraries(terrain PRIVATE Vulkan::Vulkan)
+    target_compile_definitions(strata PRIVATE TERRAIN_ENABLE_VULKAN=1)
+    target_link_libraries(strata PRIVATE Vulkan::Vulkan)
 endif()
 
 if(ENABLE_METAL)
-    target_compile_definitions(terrain PRIVATE TERRAIN_ENABLE_METAL=1)
-    target_link_libraries(terrain PRIVATE
+    target_compile_definitions(strata PRIVATE TERRAIN_ENABLE_METAL=1)
+    target_link_libraries(strata PRIVATE
         "-framework Metal"
         "-framework QuartzCore"
         "-framework Foundation"
@@ -199,11 +199,11 @@ if(ENABLE_METAL)
     )
 endif()
 
-target_link_libraries(terrain PRIVATE
-    terrain_imgui
+target_link_libraries(strata PRIVATE
+    strata_imgui
     glfw
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(terrain PRIVATE -Wall -Wextra)
+    target_compile_options(strata PRIVATE -Wall -Wextra)
 endif()

@@ -1,4 +1,4 @@
-# vulkan-terrain-engine
+# StrataEngine
 
 Real-time procedural terrain rendering engine built with C++17, an RHI supporting **native Apple Metal** and **Vulkan** (via `glslc` + `spirv-cross`), linear HDR PBR lighting, physical atmosphere LUTs, 4-cascade CSM shadows, volumetric clouds & god-rays, spectral clipmap water with screen-space reflections, dynamic weather, and toroidal zero-stall chunk streaming.
 
@@ -45,10 +45,10 @@ Real-time procedural terrain rendering engine built with C++17, an RHI supportin
 
 ### CLI Options
 ```bash
-./build/terrain                     # Interactive launch (Metal default on macOS, Vulkan elsewhere)
-./build/terrain --backend metal     # Force Apple Metal backend
-./build/terrain --backend vulkan    # Force Vulkan backend
-./build/terrain --smoke-test        # Render 5 frames cleanly and print GPU/CPU timings
+./build/strata                      # Interactive launch (Metal default on macOS, Vulkan elsewhere)
+./build/strata --backend metal      # Force Apple Metal backend
+./build/strata --backend vulkan     # Force Vulkan backend
+./build/strata --smoke-test         # Render 5 frames cleanly and print GPU/CPU timings
 ```
 
 ### Keyboard & Mouse
@@ -73,7 +73,7 @@ Real-time procedural terrain rendering engine built with C++17, an RHI supportin
 ## Project Structure
 
 ```
-vulkan-terrain/
+StrataEngine/
 ├── CMakeLists.txt
 ├── scripts/
 │   └── gen_metal_map.py
@@ -118,7 +118,7 @@ brew install cmake ninja glfw glm shaderc spirv-cross
 
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j8
-./build/terrain --backend metal
+./build/strata --backend metal
 ```
 
 ### Linux (Ubuntu / Debian / Arch)
@@ -128,7 +128,7 @@ sudo apt update && sudo apt install build-essential cmake ninja-build libvulkan-
 
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-./build/terrain --backend vulkan
+./build/strata --backend vulkan
 ```
 
 ### Windows (MSVC + Vulkan SDK + vcpkg)
@@ -136,5 +136,5 @@ cmake --build build -j$(nproc)
 vcpkg install glfw3:x64-windows glm:x64-windows
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
-.\build\Release\terrain.exe
+.\build\Release\strata.exe
 ```
