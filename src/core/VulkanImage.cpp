@@ -53,7 +53,13 @@ void VulkanImage::create(
     uint32_t height,
     VkFormat format,
     VkImageUsageFlags usage,
-    VkImageAspectFlags aspectMask
+    VkImageAspectFlags aspectMask,
+    uint32_t mipLevels,
+    uint32_t arrayLayers,
+    uint32_t depth,
+    VkImageType imageType,
+    VkImageViewType viewType,
+    VkImageCreateFlags createFlags
 ) {
     destroy();
 
@@ -64,12 +70,13 @@ void VulkanImage::create(
 
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.flags = createFlags;
+    imageInfo.imageType = imageType;
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
+    imageInfo.extent.depth = depth;
+    imageInfo.mipLevels = mipLevels;
+    imageInfo.arrayLayers = arrayLayers;
     imageInfo.format = format;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -88,13 +95,13 @@ void VulkanImage::create(
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = m_image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType = viewType;
     viewInfo.format = format;
     viewInfo.subresourceRange.aspectMask = aspectMask;
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.levelCount = mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
+    viewInfo.subresourceRange.layerCount = arrayLayers;
 
     VK_CHECK(vkCreateImageView(m_device, &viewInfo, nullptr, &m_view), "Failed to create image view");
 }

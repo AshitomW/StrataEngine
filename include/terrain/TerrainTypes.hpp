@@ -146,10 +146,66 @@ struct TerrainConfig {
         applyPreset(EngineConstants::Presets::MULTIBIOME);
     }
 
+    void applyAlpineValley() {
+        applyPreset(EngineConstants::Presets::ALPINE_VALLEY);
+    }
+
+    void applyTundra() {
+        applyPreset(EngineConstants::Presets::TUNDRA);
+    }
+
+    void applyAutumnHighlands() {
+        applyPreset(EngineConstants::Presets::AUTUMN_HIGHLANDS);
+    }
+
+    void applyKarstPeaks() {
+        applyPreset(EngineConstants::Presets::KARST_PEAKS);
+    }
+
     bool showWater = true;
     float waveAmplitude = EngineConstants::Water::DEFAULT_WAVE_AMPLITUDE;
     float waveSpeed = EngineConstants::Water::DEFAULT_WAVE_SPEED;
     float waterClarity = EngineConstants::Water::DEFAULT_WATER_CLARITY;
+    float windSpeed = 9.0f;
+    float waveChoppiness = 0.85f;
+    bool interactiveRipples = true;
+
+    float exposure = 1.0f;
+    bool bloomEnabled = true;
+    float bloomIntensity = 0.32f;
+    float bloomThreshold = 1.15f;
+    int toneMapper = 0; // 0: AgX, 1: ACES, 2: Reinhard
+    float turbidity = 1.0f;
+    float mieAnisotropy = 0.78f;
+    float sunIntensity = 2.6f;
+    float iblStrength = 1.0f;
+
+    bool shadowsEnabled = true;
+    float shadowStrength = 1.0f;
+    float shadowBias = 0.0012f;
+    bool gtaoEnabled = true;
+    float gtaoStrength = 0.75f;
+    bool usePBRTextures = true;
+
+    int weatherType = 1; // 0: Clear, 1: PartlyCloudy, 2: Overcast, 3: Rain, 4: Thunderstorm, 5: Snow, 6: Foggy
+    bool weatherAutoTransition = true;
+    float cloudCoverage = 0.42f;
+    float wetness = 0.0f;
+    float snowAccumulation = 0.0f;
+    float precipitationIntensity = 0.0f;
+    float precipitationType = 0.0f; // 0: none, 1: rain, 2: snow
+    float fogMultiplier = 1.0f;
+    float lightningFlash = 0.0f;
+
+    bool showStructures = false;
+    float structureDensity = 0.0f;
+
+    bool ssrEnabled = true;
+    bool godRaysEnabled = true;
+    float godRaysIntensity = 0.55f;
+    bool cdlodMorph = true;
+    bool sharpenEnabled = true;
+    int chunkBudgetPerFrame = 16;
 
     void toggleWater() {
         showWater = !showWater;
@@ -176,6 +232,8 @@ struct GlobalUBO {
     glm::mat4 viewProj;
     glm::mat4 view;
     glm::mat4 proj;
+    glm::mat4 invViewProj;
+    glm::mat4 invProj;
     glm::vec4 cameraPos;
     glm::vec4 sunDir;
     glm::vec4 sunColor;
@@ -183,6 +241,18 @@ struct GlobalUBO {
     glm::vec4 skyColorHorizon;
     glm::vec4 terrainParams;
     glm::vec4 biomeParams;
+    glm::vec4 postParams;
+    glm::vec4 atmosphereParams;
+    glm::mat4 lightSpaceMatrices[4];
+    glm::vec4 cascadeSplits;
+    glm::vec4 shadowParams;
+    glm::vec4 weatherParams;
+    glm::vec4 weatherParams2;
+    glm::vec4 tracingParams; // x: ssrEnabled, y: godRaysIntensity, z: cdlodMorph, w: sharpenEnabled
+};
+
+struct ShadowPushConstants {
+    glm::uvec4 cascadeInfo;
 };
 
 struct ChunkPushConstants {

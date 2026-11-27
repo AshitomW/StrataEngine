@@ -1,199 +1,30 @@
 #include "renderer/FoliageRenderer.hpp"
+#include "renderer/ShadowRenderer.hpp"
+#include "terrain/TerrainNoiseCPU.hpp"
 #include <cmath>
 #include <cstring>
 #include <random>
+#include <unordered_set>
 
-namespace {
-
-uint32_t hashCPU(glm::uvec2 p, uint32_t seed) {
-    uint32_t h = seed;
-    h ^= p.x + 0x9e3779b9u + (h << 6) + (h >> 2);
-    h ^= p.y + 0x9e3779b9u + (h << 6) + (h >> 2);
-    h ^= h >> 16;
-    h *= 0x85ebca6bu;
-    h ^= h >> 13;
-    h *= 0xc2b2ae35u;
-    h ^= h >> 16;
-    return h;
-}
-
-glm::vec2 hash2CPU(glm::vec2 p, uint32_t seed) {
-    glm::uvec2 ip = glm::uvec2(glm::ivec2(glm::floor(p)) + 100000);
-    uint32_t h1 = hashCPU(ip, seed);
-    uint32_t h2 = hashCPU(ip + glm::uvec2(137u, 269u), seed);
-    return glm::vec2(
-        static_cast<float>(h1 & 0x00FFFFFFu) / 16777215.0f,
-        static_cast<float>(h2 & 0x00FFFFFFu) / 16777215.0f
-    ) * 2.0f - 1.0f;
-}
-
-float gradientNoiseCPU(glm::vec2 p, uint32_t seed) {
-    glm::vec2 i = glm::floor(p);
-    glm::vec2 f = glm::fract(p);
-
-    glm::vec2 u = f * f * f * (f * (f * 6.0f - 15.0f) + 10.0f);
-
-    glm::vec2 g00 = hash2CPU(i + glm::vec2(0.0f, 0.0f), seed);
-    glm::vec2 g10 = hash2CPU(i + glm::vec2(1.0f, 0.0f), seed);
-    glm::vec2 g01 = hash2CPU(i + glm::vec2(0.0f, 1.0f), seed);
-    glm::vec2 g11 = hash2CPU(i + glm::vec2(1.0f, 1.0f), seed);
-
-    float n00 = glm::dot(g00, f - glm::vec2(0.0f, 0.0f));
-    float n10 = glm::dot(g10, f - glm::vec2(1.0f, 0.0f));
-    float n01 = glm::dot(g01, f - glm::vec2(0.0f, 1.0f));
-    float n11 = glm::dot(g11, f - glm::vec2(1.0f, 1.0f));
-
-    return glm::mix(
-        glm::mix(n00, n10, u.x),
-        glm::mix(n01, n11, u.x),
-        u.y
-    );
-}
-
-float fbmCPU(glm::vec2 p, uint32_t seed, int octaves, float lacunarity, float persistence) {
-    float sum = 0.0f;
-    float amp = 1.0f;
-    float maxAmp = 0.0f;
-    float freq = 1.0f;
-
-    for (int i = 0; i < octaves; ++i) {
-        sum += amp * gradientNoiseCPU(p * freq, seed + static_cast<uint32_t>(i * 31));
-        maxAmp += amp;
-        freq *= lacunarity;
-        amp *= persistence;
-    }
-
-    return sum / maxAmp;
-}
-
-float evaluatePresetHeightCPU(glm::vec2 worldPos, uint32_t presetType, float baseFreq, float amp, float warpStrength, float mountainPower, uint32_t seed) {
-    if (presetType == 0u) {
-        float mFreq = baseFreq * 2.2f;
-        glm::vec2 p = worldPos * mFreq;
-
-        glm::vec2 q = glm::vec2(
-            fbmCPU(p * 0.5f, seed + 11u, 4, 2.0f, 0.5f),
-            fbmCPU(p * 0.5f + glm::vec2(5.2f, 1.3f), seed + 22u, 4, 2.0f, 0.5f)
-        );
-        glm::vec2 warped = p + warpStrength * q;
-
-        float chain = fbmCPU(warped * 0.35f, seed + 33u, 4, 2.0f, 0.5f);
-        float chainMask = glm::smoothstep(-0.30f, 0.35f, chain);
-
-        float r1 = 1.0f - std::abs(gradientNoiseCPU(warped * 0.75f, seed + 101u));
-        float r2 = 1.0f - std::abs(gradientNoiseCPU(warped * 1.60f, seed + 102u));
-        float r3 = 1.0f - std::abs(gradientNoiseCPU(warped * 3.30f, seed + 103u));
-        float r4 = 1.0f - std::abs(gradientNoiseCPU(warped * 6.80f, seed + 104u));
-
-        float peakStructure = (r1 * 0.50f + r2 * 0.30f + r3 * 0.14f + r4 * 0.06f);
-        peakStructure = std::pow(std::max(0.0f, peakStructure), 2.1f) * 2.2f;
-
-        float valley = std::abs(gradientNoiseCPU(warped * 0.45f + glm::vec2(2.3f, 7.1f), seed + 200u));
-        float valleyCarve = glm::smoothstep(0.04f, 0.60f, valley);
-
-        float lakeBasin = fbmCPU(warped * 0.25f, seed + 250u, 3, 2.0f, 0.5f);
-        float lakeDip = glm::smoothstep(-0.4f, 0.2f, lakeBasin);
-
-        float h = glm::mix(chain * 0.15f - 0.05f, peakStructure * mountainPower * valleyCarve, chainMask * lakeDip);
-        h = h * 0.88f + 0.04f;
-        return h * amp;
-
-    } else if (presetType == 1u) {
-        float hFreq = baseFreq * 4.2f;
-        glm::vec2 p = worldPos * hFreq;
-
-        glm::vec2 q = glm::vec2(
-            gradientNoiseCPU(p * 0.35f, seed + 10u),
-            gradientNoiseCPU(p * 0.35f + glm::vec2(4.1f, 2.7f), seed + 20u)
-        );
-        glm::vec2 warped = p + warpStrength * 0.35f * q;
-
-        float hill1 = std::sin(warped.x * 0.65f) * std::cos(warped.y * 0.65f) * 0.25f;
-        float hill2 = (gradientNoiseCPU(warped * 0.75f, seed + 30u) * 0.5f + 0.5f);
-        float hill3 = (gradientNoiseCPU(warped * 1.50f, seed + 40u) * 0.5f + 0.5f) * 0.35f;
-        float hill4 = (gradientNoiseCPU(warped * 3.00f, seed + 50u) * 0.5f + 0.5f) * 0.12f;
-        float hill5 = gradientNoiseCPU(warped * 6.00f, seed + 60u) * 0.04f;
-
-        float river = std::abs(gradientNoiseCPU(warped * 0.25f + glm::vec2(1.2f, 8.4f), seed + 70u));
-        float riverCarve = glm::smoothstep(0.02f, 0.25f, river);
-
-        float rollingMounds = std::pow(std::max(0.0f, hill2 + hill3 + hill4 + hill1), 1.30f) * 0.50f + hill5;
-        float h = (rollingMounds * riverCarve) * 0.85f + 0.08f;
-        return h * amp;
-
-    } else if (presetType == 2u) {
-        float cFreq = baseFreq * 2.8f;
-        glm::vec2 p = worldPos * cFreq;
-
-        glm::vec2 q = glm::vec2(
-            fbmCPU(p * 0.55f, seed + 15u, 3, 2.0f, 0.5f),
-            fbmCPU(p * 0.55f + glm::vec2(7.3f, 1.9f), seed + 25u, 3, 2.0f, 0.5f)
-        );
-        glm::vec2 warped = p + warpStrength * 0.9f * q;
-
-        float baseMesa = fbmCPU(warped * 0.5f, seed + 50u, 4, 2.0f, 0.5f);
-        float numSteps = 8.0f;
-        float stepped = std::floor(baseMesa * numSteps) / numSteps;
-        float frac = (baseMesa * numSteps) - std::floor(baseMesa * numSteps);
-        float terracedMesa = stepped + glm::smoothstep(0.0f, 0.28f, frac) / numSteps;
-
-        float chasm1 = std::abs(fbmCPU(warped * 0.70f, seed + 70u, 4, 2.0f, 0.5f));
-        float chasm2 = std::abs(fbmCPU(warped * 1.35f + glm::vec2(3.1f, 5.7f), seed + 80u, 3, 2.0f, 0.5f));
-        float gorge = std::min(chasm1, chasm2);
-        float gorgeCarve = glm::smoothstep(0.04f, 0.35f, gorge);
-
-        float buttes = 1.0f - std::abs(gradientNoiseCPU(warped * 1.7f, seed + 90u));
-        buttes = std::pow(std::max(0.0f, buttes), 3.2f) * 0.30f;
-
-        float h = (terracedMesa * gorgeCarve + buttes) * 0.85f + 0.06f;
-        return h * amp;
-
-    } else {
-        float iFreq = baseFreq * 2.6f;
-        glm::vec2 p = worldPos * iFreq;
-
-        glm::vec2 q = glm::vec2(
-            gradientNoiseCPU(p * 0.5f, seed + 12u),
-            gradientNoiseCPU(p * 0.5f + glm::vec2(3.7f, 8.2f), seed + 24u)
-        );
-        glm::vec2 warped = p + warpStrength * 0.55f * q;
-
-        float oceanBase = fbmCPU(warped * 0.45f, seed + 10u, 4, 2.0f, 0.5f);
-        float islandPeak = std::pow(std::max(0.0f, 1.0f - std::abs(gradientNoiseCPU(warped * 1.25f, seed + 60u))), 2.0f);
-        float volcanoCrater = std::abs(gradientNoiseCPU(warped * 2.5f, seed + 70u)) * 0.25f;
-
-        float islandMask = glm::smoothstep(-0.06f, 0.35f, oceanBase);
-        float h = glm::mix(-0.25f, (islandPeak * 1.3f - volcanoCrater) * 1.25f, islandMask);
-        return h * amp;
-    }
-}
-
-}
-
-FoliageRenderer::FoliageRenderer(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout)
-    : m_device(context.getDevice()) {
-    createModels(context);
-    createPipeline(context, renderPass, uboSetLayout);
+FoliageRenderer::FoliageRenderer(rhi::RHIDevice& device) {
+    createModels(device);
+    createPipeline(device);
 
     m_instancesByType.resize(NUM_MODELS);
 }
 
-FoliageRenderer::~FoliageRenderer() = default;
-
-void FoliageRenderer::createModels(const VulkanContext& context) {
+void FoliageRenderer::createModels(rhi::RHIDevice& device) {
     std::vector<FoliageVertex> vertices;
     std::vector<uint32_t> indices;
     m_modelMeshes.resize(NUM_MODELS);
 
-    auto addCylinder = [&](float radius, float minY, float maxY, int sides, glm::vec3 col) {
+    auto addTapered = [&](float rBot, float rTop, float minY, float maxY, float offX, float offZ, int sides, glm::vec3 col) {
         uint32_t base = static_cast<uint32_t>(vertices.size());
         for (int i = 0; i < sides; ++i) {
             float a = static_cast<float>(i) / static_cast<float>(sides) * 2.0f * 3.14159f;
-            float x = std::cos(a) * radius;
-            float z = std::sin(a) * radius;
-            glm::vec3 n(std::cos(a), 0.0f, std::sin(a));
-            vertices.push_back({glm::vec3(x, minY, z), n, col});
-            vertices.push_back({glm::vec3(x, maxY, z), n, col});
+            glm::vec3 n(std::cos(a), 0.1f, std::sin(a));
+            vertices.push_back({glm::vec3(std::cos(a) * rBot, minY, std::sin(a) * rBot), glm::normalize(n), col * 0.85f});
+            vertices.push_back({glm::vec3(offX + std::cos(a) * rTop, maxY, offZ + std::sin(a) * rTop), glm::normalize(n), col});
         }
         for (int i = 0; i < sides; ++i) {
             int next = (i + 1) % sides;
@@ -202,17 +33,17 @@ void FoliageRenderer::createModels(const VulkanContext& context) {
         }
     };
 
-    auto addCone = [&](float baseY, float topY, float radius, int sides, glm::vec3 col) {
+    auto addCone = [&](float baseY, float topY, float radius, float offX, float offZ, int sides, glm::vec3 baseCol, glm::vec3 tipCol) {
         uint32_t tipIdx = static_cast<uint32_t>(vertices.size());
-        vertices.push_back({glm::vec3(0.0f, topY, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), col});
+        vertices.push_back({glm::vec3(offX, topY, offZ), glm::vec3(0.0f, 1.0f, 0.0f), tipCol});
         uint32_t base = static_cast<uint32_t>(vertices.size());
 
         for (int i = 0; i < sides; ++i) {
             float a = static_cast<float>(i) / static_cast<float>(sides) * 2.0f * 3.14159f;
-            float x = std::cos(a) * radius;
-            float z = std::sin(a) * radius;
-            glm::vec3 n = glm::normalize(glm::vec3(std::cos(a), 0.4f, std::sin(a)));
-            vertices.push_back({glm::vec3(x, baseY, z), n, col});
+            float x = offX + std::cos(a) * radius;
+            float z = offZ + std::sin(a) * radius;
+            glm::vec3 n = glm::normalize(glm::vec3(std::cos(a), 0.45f, std::sin(a)));
+            vertices.push_back({glm::vec3(x, baseY, z), n, baseCol});
         }
         for (int i = 0; i < sides; ++i) {
             int next = (i + 1) % sides;
@@ -222,205 +53,198 @@ void FoliageRenderer::createModels(const VulkanContext& context) {
         }
     };
 
+    auto addRock = [&](float rx, float ry, float rz, glm::vec3 col) {
+        uint32_t base = static_cast<uint32_t>(vertices.size());
+        const int rings = 3;
+        const int segs = 7;
+        for (int r = 0; r <= rings; ++r) {
+            float v = static_cast<float>(r) / static_cast<float>(rings);
+            float phi = v * 3.14159f;
+            for (int s = 0; s < segs; ++s) {
+                float u = static_cast<float>(s) / static_cast<float>(segs);
+                float theta = u * 2.0f * 3.14159f;
+                float jag = 0.85f + 0.28f * std::sin(theta * 3.0f + phi * 2.0f);
+                glm::vec3 dir(std::sin(phi) * std::cos(theta), std::cos(phi), std::sin(phi) * std::sin(theta));
+                glm::vec3 pos(dir.x * rx * jag, dir.y * ry * jag + 0.15f * ry, dir.z * rz * jag);
+                float shade = 0.72f + 0.38f * std::max(0.0f, dir.y);
+                vertices.push_back({pos, glm::normalize(dir), col * shade});
+            }
+        }
+        for (int r = 0; r < rings; ++r) {
+            for (int s = 0; s < segs; ++s) {
+                int ns = (s + 1) % segs;
+                uint32_t a = base + r * segs + s;
+                uint32_t b = base + r * segs + ns;
+                uint32_t c = base + (r + 1) * segs + s;
+                uint32_t d = base + (r + 1) * segs + ns;
+                indices.push_back(a); indices.push_back(c); indices.push_back(b);
+                indices.push_back(b); indices.push_back(c); indices.push_back(d);
+            }
+        }
+    };
+
+    // 0: Layered Alpine Pine (5 tiers)
     m_modelMeshes[0].firstIndex = static_cast<uint32_t>(indices.size());
-    addCylinder(0.38f, -1.2f, 3.2f, 6, glm::vec3(0.18f, 0.12f, 0.08f));
-    addCone(1.8f, 5.5f, 2.4f, 7, glm::vec3(0.03f, 0.12f, 0.04f));
-    addCone(4.2f, 8.0f, 1.8f, 7, glm::vec3(0.04f, 0.14f, 0.05f));
-    addCone(6.5f, 10.5f, 1.2f, 7, glm::vec3(0.05f, 0.16f, 0.06f));
+    addTapered(0.45f, 0.16f, -1.2f, 5.2f, 0.0f, 0.0f, 7, glm::vec3(0.20f, 0.13f, 0.08f));
+    addCone(1.5f, 4.6f, 2.7f, 0.0f, 0.0f, 8, glm::vec3(0.025f, 0.10f, 0.035f), glm::vec3(0.045f, 0.16f, 0.055f));
+    addCone(3.0f, 6.2f, 2.3f, 0.0f, 0.0f, 8, glm::vec3(0.030f, 0.12f, 0.040f), glm::vec3(0.055f, 0.18f, 0.060f));
+    addCone(4.5f, 7.8f, 1.8f, 0.0f, 0.0f, 8, glm::vec3(0.035f, 0.14f, 0.045f), glm::vec3(0.065f, 0.21f, 0.070f));
+    addCone(6.1f, 9.4f, 1.3f, 0.0f, 0.0f, 7, glm::vec3(0.045f, 0.16f, 0.055f), glm::vec3(0.075f, 0.24f, 0.080f));
+    addCone(7.6f, 11.2f, 0.85f, 0.0f, 0.0f, 7, glm::vec3(0.055f, 0.18f, 0.060f), glm::vec3(0.090f, 0.27f, 0.095f));
     m_modelMeshes[0].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[0].firstIndex;
 
+    // 1: Broadleaf Oak with multi-lobe crown
     m_modelMeshes[1].firstIndex = static_cast<uint32_t>(indices.size());
-    addCylinder(0.48f, -1.2f, 4.0f, 6, glm::vec3(0.20f, 0.14f, 0.09f));
-    addCone(3.2f, 7.5f, 2.8f, 8, glm::vec3(0.08f, 0.22f, 0.06f));
-    addCone(5.0f, 8.8f, 2.2f, 8, glm::vec3(0.10f, 0.25f, 0.07f));
+    addTapered(0.60f, 0.34f, -1.2f, 3.8f, 0.0f, 0.0f, 7, glm::vec3(0.22f, 0.14f, 0.09f));
+    addTapered(0.24f, 0.14f, 2.8f, 5.4f, 1.1f, 0.6f, 5, glm::vec3(0.22f, 0.14f, 0.09f));
+    addTapered(0.22f, 0.12f, 2.9f, 5.2f, -1.0f, -0.7f, 5, glm::vec3(0.22f, 0.14f, 0.09f));
+    addCone(3.3f, 7.6f, 3.0f, 0.0f, 0.0f, 9, glm::vec3(0.06f, 0.18f, 0.04f), glm::vec3(0.13f, 0.30f, 0.08f));
+    addCone(4.0f, 7.0f, 2.1f, 1.2f, 0.7f, 8, glm::vec3(0.07f, 0.20f, 0.05f), glm::vec3(0.15f, 0.33f, 0.09f));
+    addCone(3.8f, 6.8f, 2.0f, -1.1f, -0.8f, 8, glm::vec3(0.06f, 0.19f, 0.04f), glm::vec3(0.14f, 0.31f, 0.08f));
+    addCone(5.3f, 9.2f, 2.3f, 0.0f, 0.0f, 8, glm::vec3(0.09f, 0.24f, 0.06f), glm::vec3(0.17f, 0.36f, 0.10f));
     m_modelMeshes[1].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[1].firstIndex;
 
+    // 2: Curved Segmented Palm Tree
     m_modelMeshes[2].firstIndex = static_cast<uint32_t>(indices.size());
-    addCylinder(0.32f, -1.2f, 6.2f, 6, glm::vec3(0.32f, 0.24f, 0.16f));
-    for (int p = 0; p < 6; ++p) {
-        float ang = static_cast<float>(p) / 6.0f * 2.0f * 3.14159f;
-        float dx = std::cos(ang) * 3.2f;
-        float dz = std::sin(ang) * 3.2f;
+    addTapered(0.38f, 0.28f, -1.2f, 2.5f, 0.35f, 0.15f, 7, glm::vec3(0.30f, 0.22f, 0.14f));
+    addTapered(0.28f, 0.20f, 2.4f, 6.4f, 0.75f, 0.30f, 7, glm::vec3(0.34f, 0.26f, 0.17f));
+    for (int p = 0; p < 10; ++p) {
+        float ang = static_cast<float>(p) / 10.0f * 2.0f * 3.14159f;
+        float len = (p % 2 == 0) ? 3.5f : 2.8f;
+        float lift = (p % 2 == 0) ? 6.8f : 7.2f;
+        float droop = (p % 2 == 0) ? 4.6f : 5.4f;
+        float dx = std::cos(ang) * len;
+        float dz = std::sin(ang) * len;
         uint32_t pBase = static_cast<uint32_t>(vertices.size());
-        glm::vec3 frondCol(0.08f, 0.26f, 0.08f);
-        vertices.push_back({glm::vec3(0.0f, 6.2f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), frondCol});
-        vertices.push_back({glm::vec3(dx * 0.5f, 6.6f, dz * 0.5f), glm::vec3(0.0f, 1.0f, 0.0f), frondCol});
-        vertices.push_back({glm::vec3(dx, 4.8f, dz), glm::vec3(0.0f, 1.0f, 0.0f), frondCol});
+        glm::vec3 frondDark(0.05f, 0.19f, 0.05f);
+        glm::vec3 frondBright(0.12f, 0.32f, 0.09f);
+        vertices.push_back({glm::vec3(0.75f, 6.4f, 0.30f), glm::vec3(0.0f, 1.0f, 0.0f), frondDark});
+        vertices.push_back({glm::vec3(0.75f + dx * 0.45f, lift, 0.30f + dz * 0.45f), glm::vec3(0.0f, 1.0f, 0.0f), frondBright});
+        vertices.push_back({glm::vec3(0.75f + dx, droop, 0.30f + dz), glm::vec3(0.0f, 0.7f, 0.0f), frondDark});
         indices.push_back(pBase); indices.push_back(pBase + 1); indices.push_back(pBase + 2);
     }
     m_modelMeshes[2].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[2].firstIndex;
 
+    // 3: Ribbed Desert Saguaro Cactus
     m_modelMeshes[3].firstIndex = static_cast<uint32_t>(indices.size());
-    glm::vec3 cactusCol(0.14f, 0.26f, 0.12f);
-    addCylinder(0.42f, -1.0f, 5.2f, 6, cactusCol);
-    addCylinder(0.26f, 2.0f, 4.2f, 5, cactusCol);
+    glm::vec3 cactusCol(0.14f, 0.28f, 0.11f);
+    addTapered(0.42f, 0.36f, -1.0f, 5.4f, 0.0f, 0.0f, 7, cactusCol);
+    addTapered(0.24f, 0.20f, 2.0f, 4.3f, 0.95f, 0.0f, 6, cactusCol * 1.08f);
+    addTapered(0.22f, 0.18f, 2.5f, 4.7f, -0.85f, 0.15f, 6, cactusCol * 1.05f);
     m_modelMeshes[3].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[3].firstIndex;
 
+    // 4: Granite Boulder
     m_modelMeshes[4].firstIndex = static_cast<uint32_t>(indices.size());
-    uint32_t bBase = static_cast<uint32_t>(vertices.size());
-    glm::vec3 rockCol(0.14f, 0.15f, 0.18f);
-    vertices.push_back({glm::vec3( 0.0f,  1.4f,  0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), rockCol * 1.15f});
-    vertices.push_back({glm::vec3(-1.2f,  0.3f, -0.9f), glm::vec3(-0.7f, 0.5f, -0.5f), rockCol});
-    vertices.push_back({glm::vec3( 1.1f,  0.4f, -1.0f), glm::vec3( 0.7f, 0.5f, -0.5f), rockCol * 0.9f});
-    vertices.push_back({glm::vec3( 1.3f,  0.2f,  0.9f), glm::vec3( 0.7f, 0.5f,  0.5f), rockCol});
-    vertices.push_back({glm::vec3(-1.0f,  0.5f,  1.1f), glm::vec3(-0.6f, 0.5f,  0.6f), rockCol * 1.05f});
-    vertices.push_back({glm::vec3( 0.0f, -0.8f,  0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), rockCol * 0.7f});
-
-    indices.push_back(bBase + 0); indices.push_back(bBase + 1); indices.push_back(bBase + 2);
-    indices.push_back(bBase + 0); indices.push_back(bBase + 2); indices.push_back(bBase + 3);
-    indices.push_back(bBase + 0); indices.push_back(bBase + 3); indices.push_back(bBase + 4);
-    indices.push_back(bBase + 0); indices.push_back(bBase + 4); indices.push_back(bBase + 1);
-    indices.push_back(bBase + 5); indices.push_back(bBase + 2); indices.push_back(bBase + 1);
-    indices.push_back(bBase + 5); indices.push_back(bBase + 3); indices.push_back(bBase + 2);
-    indices.push_back(bBase + 5); indices.push_back(bBase + 4); indices.push_back(bBase + 3);
-    indices.push_back(bBase + 5); indices.push_back(bBase + 1); indices.push_back(bBase + 4);
+    addRock(1.35f, 0.95f, 1.25f, glm::vec3(0.16f, 0.17f, 0.20f));
     m_modelMeshes[4].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[4].firstIndex;
 
+    // 5: Red Sandstone Boulder
     m_modelMeshes[5].firstIndex = static_cast<uint32_t>(indices.size());
-    uint32_t cBase = static_cast<uint32_t>(vertices.size());
-    glm::vec3 sandstoneCol(0.48f, 0.20f, 0.10f);
-    vertices.push_back({glm::vec3( 0.0f,  1.2f,  0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), sandstoneCol * 1.15f});
-    vertices.push_back({glm::vec3(-1.0f,  0.3f, -0.8f), glm::vec3(-0.7f, 0.5f, -0.5f), sandstoneCol});
-    vertices.push_back({glm::vec3( 1.0f,  0.4f, -0.8f), glm::vec3( 0.7f, 0.5f, -0.5f), sandstoneCol * 0.9f});
-    vertices.push_back({glm::vec3( 1.1f,  0.2f,  0.8f), glm::vec3( 0.7f, 0.5f,  0.5f), sandstoneCol});
-    vertices.push_back({glm::vec3(-0.9f,  0.5f,  0.9f), glm::vec3(-0.6f, 0.5f,  0.6f), sandstoneCol * 1.05f});
-    vertices.push_back({glm::vec3( 0.0f, -0.8f,  0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), sandstoneCol * 0.7f});
-
-    indices.push_back(cBase + 0); indices.push_back(cBase + 1); indices.push_back(cBase + 2);
-    indices.push_back(cBase + 0); indices.push_back(cBase + 2); indices.push_back(cBase + 3);
-    indices.push_back(cBase + 0); indices.push_back(cBase + 3); indices.push_back(cBase + 4);
-    indices.push_back(cBase + 0); indices.push_back(cBase + 4); indices.push_back(cBase + 1);
-    indices.push_back(cBase + 5); indices.push_back(cBase + 2); indices.push_back(cBase + 1);
-    indices.push_back(cBase + 5); indices.push_back(cBase + 3); indices.push_back(cBase + 2);
-    indices.push_back(cBase + 5); indices.push_back(cBase + 4); indices.push_back(cBase + 3);
-    indices.push_back(cBase + 5); indices.push_back(cBase + 1); indices.push_back(cBase + 4);
+    addRock(1.25f, 0.85f, 1.15f, glm::vec3(0.46f, 0.22f, 0.11f));
     m_modelMeshes[5].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[5].firstIndex;
 
+    // 6: Wild Grass Clump (4 crossed blades)
     m_modelMeshes[6].firstIndex = static_cast<uint32_t>(indices.size());
     glm::vec3 gColBottom(0.06f, 0.16f, 0.04f);
-    glm::vec3 gColTop(0.12f, 0.28f, 0.08f);
-
-    float gWidth = 1.0f;
-    float gHeight = 1.4f;
-    for (int q = 0; q < 3; ++q) {
-        float angle = static_cast<float>(q) * (3.14159f / 3.0f);
+    glm::vec3 gColTop(0.14f, 0.30f, 0.09f);
+    float gWidth = 0.95f;
+    float gHeight = 1.45f;
+    for (int q = 0; q < 4; ++q) {
+        float angle = static_cast<float>(q) * (3.14159f / 4.0f);
         float dx = std::cos(angle) * gWidth;
         float dz = std::sin(angle) * gWidth;
         uint32_t qBase = static_cast<uint32_t>(vertices.size());
         glm::vec3 n(std::sin(angle), 0.2f, -std::cos(angle));
-
-        vertices.push_back({glm::vec3(-dx, -0.5f, -dz), n, gColBottom});
-        vertices.push_back({glm::vec3( dx, -0.5f,  dz), n, gColBottom});
-        vertices.push_back({glm::vec3(-dx * 0.8f, gHeight, -dz * 0.8f), n, gColTop});
-        vertices.push_back({glm::vec3( dx * 0.8f, gHeight,  dz * 0.8f), n, gColTop});
-
+        vertices.push_back({glm::vec3(-dx, -0.4f, -dz), n, gColBottom});
+        vertices.push_back({glm::vec3( dx, -0.4f,  dz), n, gColBottom});
+        vertices.push_back({glm::vec3(-dx * 0.85f + 0.12f, gHeight, -dz * 0.85f), n, gColTop});
+        vertices.push_back({glm::vec3( dx * 0.85f + 0.12f, gHeight,  dz * 0.85f), n, gColTop});
         indices.push_back(qBase + 0); indices.push_back(qBase + 2); indices.push_back(qBase + 1);
         indices.push_back(qBase + 1); indices.push_back(qBase + 2); indices.push_back(qBase + 3);
     }
     m_modelMeshes[6].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[6].firstIndex;
 
-    VkDeviceSize vSize = sizeof(FoliageVertex) * vertices.size();
-    VulkanBuffer vStaging(context, vSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vStaging.copyFromHost(vertices.data(), vSize);
-    m_vertexBuffer.create(context, vSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VulkanBuffer::copyBuffer(context, vStaging.getBuffer(), m_vertexBuffer.getBuffer(), vSize);
+    // 7: Tall Segmented Bamboo Cluster
+    m_modelMeshes[7].firstIndex = static_cast<uint32_t>(indices.size());
+    glm::vec3 bambooStalk(0.20f, 0.34f, 0.09f);
+    glm::vec3 bambooLeaf(0.08f, 0.28f, 0.06f);
+    glm::vec3 bambooTip(0.16f, 0.38f, 0.10f);
+    const float culmOffsets[5][4] = {
+        { 0.0f,  0.0f,  0.35f,  0.20f},
+        { 0.65f, 0.30f, 0.70f, -0.15f},
+        {-0.55f, 0.45f,-0.45f,  0.55f},
+        { 0.25f,-0.60f,-0.15f, -0.70f},
+        {-0.40f,-0.45f, 0.20f, -0.50f}
+    };
+    const float culmHeights[5] = { 10.5f, 9.2f, 8.6f, 9.8f, 7.8f };
+    for (int c = 0; c < 5; ++c) {
+        float bx = culmOffsets[c][0], bz = culmOffsets[c][1];
+        float tx = culmOffsets[c][2], tz = culmOffsets[c][3];
+        float h = culmHeights[c];
+        // Build vertical segmented culm from (bx, 0, bz) to (tx, h, tz)
+        uint32_t cBase = static_cast<uint32_t>(vertices.size());
+        const int sides = 5;
+        for (int i = 0; i < sides; ++i) {
+            float a = static_cast<float>(i) / static_cast<float>(sides) * 2.0f * 3.14159f;
+            glm::vec3 n(std::cos(a), 0.1f, std::sin(a));
+            vertices.push_back({glm::vec3(bx + std::cos(a) * 0.13f, -0.6f, bz + std::sin(a) * 0.13f), glm::normalize(n), bambooStalk * 0.8f});
+            vertices.push_back({glm::vec3(tx + std::cos(a) * 0.08f, h, tz + std::sin(a) * 0.08f), glm::normalize(n), bambooStalk});
+        }
+        for (int i = 0; i < sides; ++i) {
+            int next = (i + 1) % sides;
+            indices.push_back(cBase + i * 2); indices.push_back(cBase + i * 2 + 1); indices.push_back(cBase + next * 2);
+            indices.push_back(cBase + next * 2); indices.push_back(cBase + i * 2 + 1); indices.push_back(cBase + next * 2 + 1);
+        }
+        addCone(h * 0.65f, h + 1.1f, 1.35f, tx, tz, 6, bambooLeaf, bambooTip);
+        addCone(h * 0.48f, h * 0.85f, 1.15f, (bx + tx) * 0.5f, (bz + tz) * 0.5f, 6, bambooLeaf * 0.9f, bambooTip);
+    }
+    m_modelMeshes[7].indexCount = static_cast<uint32_t>(indices.size()) - m_modelMeshes[7].firstIndex;
 
-    VkDeviceSize iSize = sizeof(uint32_t) * indices.size();
-    VulkanBuffer iStaging(context, iSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    iStaging.copyFromHost(indices.data(), iSize);
-    m_indexBuffer.create(context, iSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VulkanBuffer::copyBuffer(context, iStaging.getBuffer(), m_indexBuffer.getBuffer(), iSize);
+    size_t vSize = sizeof(FoliageVertex) * vertices.size();
+    m_vertexBuffer = device.createBuffer(vSize, rhi::BufferUsage::Vertex | rhi::BufferUsage::TransferDst, rhi::MemoryUsage::GpuOnly);
+    device.uploadBuffer(*m_vertexBuffer, vertices.data(), vSize);
+
+    size_t iSize = sizeof(uint32_t) * indices.size();
+    m_indexBuffer = device.createBuffer(iSize, rhi::BufferUsage::Index | rhi::BufferUsage::TransferDst, rhi::MemoryUsage::GpuOnly);
+    device.uploadBuffer(*m_indexBuffer, indices.data(), iSize);
 }
 
-void FoliageRenderer::createPipeline(const VulkanContext&, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout) {
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &uboSetLayout;
-
-    VkPipelineLayout layout;
-    VK_CHECK(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &layout), "Failed to create foliage pipeline layout");
-    m_pipelineLayout = vkh::PipelineLayoutHandle(
-        layout,
-        [device = m_device](VkPipelineLayout l) { vkDestroyPipelineLayout(device, l, nullptr); }
-    );
-
-    VkShaderModule vertShader = PipelineBuilder::createShaderModule(m_device, "shaders/foliage.vert.spv");
-    VkShaderModule fragShader = PipelineBuilder::createShaderModule(m_device, "shaders/foliage.frag.spv");
-
-    std::vector<VkVertexInputBindingDescription> bindings = {
-        {0, sizeof(FoliageVertex), VK_VERTEX_INPUT_RATE_VERTEX},
-        {1, sizeof(FoliageInstance), VK_VERTEX_INPUT_RATE_INSTANCE}
+void FoliageRenderer::createPipeline(rhi::RHIDevice& device) {
+    rhi::GraphicsPipelineDesc desc{};
+    desc.vertexShader = "foliage.vert";
+    desc.fragmentShader = "foliage.frag";
+    desc.vertexBindings = {
+        {0, sizeof(FoliageVertex), rhi::VertexInputRate::Vertex},
+        {1, sizeof(FoliageInstance), rhi::VertexInputRate::Instance}
     };
-    std::vector<VkVertexInputAttributeDescription> attributes = {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FoliageVertex, pos)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FoliageVertex, normal)},
-        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FoliageVertex, color)},
-        {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(FoliageInstance, posScale)},
-        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(FoliageInstance, params)}
+    desc.vertexAttributes = {
+        {0, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(FoliageVertex, pos))},
+        {1, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(FoliageVertex, normal))},
+        {2, 0, rhi::Format::RGB32F, static_cast<uint32_t>(offsetof(FoliageVertex, color))},
+        {3, 1, rhi::Format::RGBA32F, static_cast<uint32_t>(offsetof(FoliageInstance, posScale))},
+        {4, 1, rhi::Format::RGBA32F, static_cast<uint32_t>(offsetof(FoliageInstance, params))}
     };
+    desc.cullMode = rhi::CullMode::None;
+    desc.depthTestEnable = true;
+    desc.depthWriteEnable = true;
+    desc.depthCompareOp = rhi::CompareOp::LessOrEqual;
+    desc.blendEnable = false;
+    desc.colorFormat = rhi::Format::RGBA16F;
+    desc.depthFormat = rhi::Format::D32F;
+    desc.hasDepth = true;
+    desc.usesUniformBuffer = true;
+    desc.usesStorageBuffer = false;
+    desc.numSampledTextures = 1;
 
-    PipelineBuilder builder;
-    builder.setVertexShader(vertShader)
-        .setFragmentShader(fragShader)
-        .setVertexInput(bindings, attributes)
-        .setCullMode(VK_CULL_MODE_NONE)
-        .setDepthState(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setPipelineLayout(layout)
-        .setRenderPass(renderPass);
-
-    m_pipeline = vkh::PipelineHandle(
-        builder.build(m_device),
-        [device = m_device](VkPipeline p) { vkDestroyPipeline(device, p, nullptr); }
-    );
-
-    vkDestroyShaderModule(m_device, vertShader, nullptr);
-    vkDestroyShaderModule(m_device, fragShader, nullptr);
+    m_pipeline = device.createGraphicsPipeline(desc);
 }
 
 float FoliageRenderer::sampleExactHeight(glm::vec2 worldPos, const TerrainConfig& config) const {
-    float baseFreq = config.frequency * 0.004f;
-    float amp = config.amplitude;
-    float warpStrength = config.warpStrength;
-    float mountainPower = config.mountainPower;
-    uint32_t seed = config.seed;
-    uint32_t presetType = config.presetType;
-
-    if (presetType < 4u) {
-        return evaluatePresetHeightCPU(worldPos, presetType, baseFreq, amp, warpStrength, mountainPower, seed);
-    }
-
-    glm::vec2 macroP = worldPos * 0.00045f;
-    float continent = fbmCPU(macroP, seed + 500u, 4, 2.0f, 0.5f);
-    float moisture  = fbmCPU(macroP + glm::vec2(12.3f, 45.6f), seed + 600u, 4, 2.0f, 0.5f);
-
-    float wOcean = glm::smoothstep(0.0f, -0.25f, continent);
-    float wHighland = glm::smoothstep(-0.05f, 0.25f, continent);
-    float wHills = 1.0f - std::max(wOcean, wHighland);
-    float wCanyon = wHighland * glm::smoothstep(-0.1f, 0.2f, moisture);
-    float wMountain = wHighland * (1.0f - glm::smoothstep(-0.1f, 0.2f, moisture));
-
-    float hMtn = evaluatePresetHeightCPU(worldPos, 0u, baseFreq, amp * 1.10f, warpStrength, mountainPower, seed);
-    float hHill = evaluatePresetHeightCPU(worldPos, 1u, baseFreq, amp * 0.40f, warpStrength * 0.5f, mountainPower * 0.6f, seed);
-    float hCanyon = evaluatePresetHeightCPU(worldPos, 2u, baseFreq, amp * 0.85f, warpStrength, mountainPower, seed);
-    float hIsland = evaluatePresetHeightCPU(worldPos, 3u, baseFreq, amp * 0.65f, warpStrength, mountainPower, seed);
-
-    float totalWeight = wOcean + wHills + wMountain + wCanyon + 0.0001f;
-    return (hIsland * wOcean + hHill * wHills + hMtn * wMountain + hCanyon * wCanyon) / totalWeight;
+    return TerrainNoiseCPU::sampleHeight(worldPos, config);
 }
 
 glm::vec3 FoliageRenderer::sampleExactNormal(glm::vec2 worldPos, const TerrainConfig& config, float) const {
-    float eps = CHUNK_CELL_SIZE * 0.5f;
-    float hL = sampleExactHeight(worldPos - glm::vec2(eps, 0.0f), config);
-    float hR = sampleExactHeight(worldPos + glm::vec2(eps, 0.0f), config);
-    float hD = sampleExactHeight(worldPos - glm::vec2(0.0f, eps), config);
-    float hU = sampleExactHeight(worldPos + glm::vec2(0.0f, eps), config);
-
-    return glm::normalize(glm::vec3(
-        (hL - hR) / (2.0f * eps),
-        1.0f,
-        (hD - hU) / (2.0f * eps)
-    ));
+    return TerrainNoiseCPU::sampleNormal(worldPos, config);
 }
 
 void FoliageRenderer::generateScatterForChunk(
@@ -456,26 +280,12 @@ void FoliageRenderer::generateScatterForChunk(
 
         float relH = (height - config.waterHeight) / config.amplitude;
 
-        uint32_t effectiveBiome = config.presetType;
-        if (effectiveBiome == 4u) {
-            glm::vec2 macroP = worldXZ * 0.00045f;
-            float continent = fbmCPU(macroP, config.seed + 500u, 4, 2.0f, 0.5f);
-            float moisture  = fbmCPU(macroP + glm::vec2(12.3f, 45.6f), config.seed + 600u, 4, 2.0f, 0.5f);
-
-            if (continent < -0.15f) {
-                effectiveBiome = 3u;
-            } else if (continent > 0.15f && moisture < 0.0f) {
-                effectiveBiome = 0u;
-            } else if (continent > 0.15f && moisture >= 0.0f) {
-                effectiveBiome = 2u;
-            } else {
-                effectiveBiome = 1u;
-            }
-        }
+        uint32_t effectiveBiome = TerrainNoiseCPU::sampleEffectiveBiome(worldXZ, config);
 
         uint32_t objType = 0;
         float prob = distProb(gen);
         float scale = distScale(gen);
+        float autumnFlag = 0.0f;
 
         if (effectiveBiome == 0u) {
 
@@ -522,8 +332,7 @@ void FoliageRenderer::generateScatterForChunk(
                 continue;
             }
 
-        } else {
-
+        } else if (effectiveBiome == 3u) {
             if (slope > 0.50f) {
                 objType = 4;
                 if (prob < 0.60f) continue;
@@ -537,18 +346,77 @@ void FoliageRenderer::generateScatterForChunk(
                 objType = 4;
                 scale *= 0.85f;
             }
+        } else if (effectiveBiome == 5u) { // Alpine Emerald Valley
+            if (relH > 0.52f || slope > 0.46f) {
+                objType = 4;
+                if (prob < 0.65f) continue;
+            } else if (prob < 0.48f) {
+                objType = 0; // Pine
+                scale *= 1.12f;
+            } else if (prob < 0.85f) {
+                objType = 6; // Valley grass
+                scale *= 1.35f;
+            } else {
+                objType = 4;
+            }
+        } else if (effectiveBiome == 6u) { // Arctic Tundra
+            if (slope > 0.45f) {
+                objType = 4;
+                if (prob < 0.55f) continue;
+            } else if (relH < 0.35f && prob < 0.25f) {
+                objType = 0;
+                scale *= 0.85f;
+            } else if (prob < 0.60f) {
+                objType = 4;
+                scale *= 0.80f;
+            } else {
+                continue;
+            }
+        } else if (effectiveBiome == 7u) { // Autumn Highlands
+            if (slope > 0.46f || relH > 0.68f) {
+                objType = 4;
+                if (prob < 0.55f) continue;
+            } else if (prob < 0.44f) {
+                objType = 1; // Autumn Broadleaf Oak
+                autumnFlag = 1.0f;
+                scale *= 1.10f;
+            } else if (prob < 0.56f) {
+                objType = 0; // Evergreen Pine contrast
+            } else if (prob < 0.88f) {
+                objType = 6; // Heather/grass
+                autumnFlag = 1.0f;
+                scale *= 1.30f;
+            } else {
+                objType = 4;
+                scale *= 0.85f;
+            }
+        } else { // Karst Peaks & Bamboo (8u)
+            if (slope > 0.44f || relH > 0.40f) {
+                if (prob < 0.72f) continue;
+                objType = 4;
+                scale *= 0.85f;
+            } else if (prob < 0.45f) {
+                objType = 7; // Bamboo Cluster
+                scale *= 1.10f;
+            } else if (prob < 0.60f) {
+                objType = 1; // Broadleaf
+            } else if (prob < 0.88f) {
+                objType = 6;
+                scale *= 1.35f;
+            } else {
+                objType = 4;
+            }
         }
 
         FoliageInstance inst{};
 
         inst.posScale = glm::vec4(worldXZ.x, height - 0.15f, worldXZ.y, scale);
-        inst.params = glm::vec4(distRot(gen), static_cast<float>(objType), distVar(gen), 0.0f);
+        inst.params = glm::vec4(distRot(gen), static_cast<float>(objType), distVar(gen), autumnFlag);
         outInstances.push_back(inst);
     }
 }
 
 void FoliageRenderer::updateInstances(
-    const VulkanContext& context,
     const std::vector<glm::vec2>& chunkOrigins,
     const TerrainConfig& config
 ) {
@@ -556,47 +424,79 @@ void FoliageRenderer::updateInstances(
         m_instancesByType[i].clear();
     }
 
+    ScatterKey scatterKey{
+        config.seed, config.presetType, config.waterHeight, config.foliageDensity,
+        config.showFoliage, config.amplitude, config.frequency, config.warpStrength, config.mountainPower
+    };
+    if (!(scatterKey == m_cachedScatterKey)) {
+        m_chunkCache.clear();
+        m_cachedScatterKey = scatterKey;
+    }
+
     if (!config.showFoliage || config.foliageDensity <= 0.001f) {
         m_instanceCounts.fill(0);
+        m_frameBufferDirty.fill(true);
         return;
     }
 
-    std::vector<FoliageInstance> allInstances;
-    allInstances.reserve(chunkOrigins.size() * static_cast<size_t>(50.0f * config.foliageDensity));
+    auto packChunkKey = [](glm::vec2 origin) -> uint64_t {
+        int32_t cx = static_cast<int32_t>(std::round(origin.x / CHUNK_SIZE));
+        int32_t cz = static_cast<int32_t>(std::round(origin.y / CHUNK_SIZE));
+        return (static_cast<uint64_t>(static_cast<uint32_t>(cx)) << 32) | static_cast<uint64_t>(static_cast<uint32_t>(cz));
+    };
+
+    std::unordered_set<uint64_t> activeKeys;
+    activeKeys.reserve(chunkOrigins.size() * 2);
 
     for (const auto& origin : chunkOrigins) {
-        generateScatterForChunk(origin, config, allInstances);
+        uint64_t key = packChunkKey(origin);
+        activeKeys.insert(key);
+        auto it = m_chunkCache.find(key);
+        if (it == m_chunkCache.end()) {
+            std::vector<FoliageInstance> chunkInstances;
+            generateScatterForChunk(origin, config, chunkInstances);
+            it = m_chunkCache.emplace(key, std::move(chunkInstances)).first;
+        }
+        for (const auto& inst : it->second) {
+            uint32_t type = static_cast<uint32_t>(inst.params.y);
+            if (type < NUM_MODELS) {
+                m_instancesByType[type].push_back(inst);
+            }
+        }
     }
 
-    for (const auto& inst : allInstances) {
-        uint32_t type = static_cast<uint32_t>(inst.params.y);
-        if (type < NUM_MODELS) {
-            m_instancesByType[type].push_back(inst);
+    for (auto it = m_chunkCache.begin(); it != m_chunkCache.end(); ) {
+        if (activeKeys.find(it->first) == activeKeys.end()) {
+            it = m_chunkCache.erase(it);
+        } else {
+            ++it;
         }
     }
 
     for (uint32_t type = 0; type < NUM_MODELS; ++type) {
-        uint32_t count = static_cast<uint32_t>(m_instancesByType[type].size());
-        m_instanceCounts[type] = count;
+        m_instanceCounts[type] = static_cast<uint32_t>(m_instancesByType[type].size());
+    }
+    m_frameBufferDirty.fill(true);
+}
+
+void FoliageRenderer::ensureFrameBuffersUploaded(rhi::RHIDevice& device, uint32_t frameIndex) {
+    if (frameIndex >= MAX_FRAMES_IN_FLIGHT || !m_frameBufferDirty[frameIndex]) {
+        return;
+    }
+
+    for (uint32_t type = 0; type < NUM_MODELS; ++type) {
+        uint32_t count = m_instanceCounts[type];
         if (count == 0) continue;
 
-        VkDeviceSize bufferSize = sizeof(FoliageInstance) * count;
-        for (uint32_t f = 0; f < MAX_FRAMES_IN_FLIGHT; ++f) {
-            VulkanBuffer& buffer = m_instanceBuffers[type][f];
-
-            if (!buffer.isValid() || buffer.getSize() < bufferSize) {
-                buffer.create(
-                    context,
-                    bufferSize,
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                );
-            }
-
-            void* dst = buffer.map();
-            std::memcpy(dst, m_instancesByType[type].data(), static_cast<size_t>(bufferSize));
+        size_t bufferSize = sizeof(FoliageInstance) * count;
+        auto& buffer = m_instanceBuffers[type][frameIndex];
+        if (!buffer || buffer->getSize() < bufferSize) {
+            buffer = device.createBuffer(bufferSize, rhi::BufferUsage::Vertex, rhi::MemoryUsage::CpuToGpu);
         }
+        buffer->copyFromHost(m_instancesByType[type].data(), bufferSize);
     }
+
+    m_frameBufferDirty[frameIndex] = false;
 }
 
 void FoliageRenderer::recordRenderCommands(const FrameContext& frame) {
@@ -606,32 +506,46 @@ void FoliageRenderer::recordRenderCommands(const FrameContext& frame) {
     }
     if (!hasAny) return;
 
-    VkCommandBuffer cmd = frame.commandBuffer;
+    rhi::RHICommandList& cmd = *frame.cmd;
     uint32_t frameIndex = frame.frameIndex;
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.get());
-
-    vkCmdBindDescriptorSets(
-        cmd,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout.get(),
-        0,
-        1,
-        &frame.globalDescriptorSet,
-        0,
-        nullptr
-    );
-
-    vkCmdBindIndexBuffer(cmd, m_indexBuffer.getBuffer(), 0, VK_INDEX_TYPE_UINT32);
+    cmd.bindGraphicsPipeline(*m_pipeline);
+    cmd.bindUniformBuffer(0, *frame.globalUBO);
+    if (frame.shadows) {
+        cmd.bindTexture(0, frame.shadows->getShadowAtlas(), frame.shadows->getShadowSampler());
+    }
+    cmd.bindIndexBuffer(*m_indexBuffer);
+    cmd.bindVertexBuffer(0, *m_vertexBuffer);
 
     for (uint32_t type = 0; type < NUM_MODELS; ++type) {
         if (m_instanceCounts[type] == 0) continue;
 
-        VkBuffer vBuffers[] = {m_vertexBuffer.getBuffer(), m_instanceBuffers[type][frameIndex].getBuffer()};
-        VkDeviceSize offsets[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, vBuffers, offsets);
+        cmd.bindVertexBuffer(1, *m_instanceBuffers[type][frameIndex]);
 
         const auto& mesh = m_modelMeshes[type];
-        vkCmdDrawIndexed(cmd, mesh.indexCount, m_instanceCounts[type], mesh.firstIndex, 0, 0);
+        cmd.drawIndexed(mesh.indexCount, m_instanceCounts[type], mesh.firstIndex);
+    }
+}
+
+void FoliageRenderer::recordShadowCommands(rhi::RHICommandList& cmd, uint32_t frameIndex, uint32_t cascadeIndex) {
+    bool hasAny = false;
+    for (uint32_t c : m_instanceCounts) {
+        if (c > 0) { hasAny = true; break; }
+    }
+    if (!hasAny) return;
+
+    ShadowPushConstants pc{};
+    pc.cascadeInfo = glm::uvec4(cascadeIndex, 0u, 0u, 0u);
+    cmd.pushConstants(rhi::ShaderStage::Vertex, &pc, sizeof(ShadowPushConstants));
+
+    cmd.bindIndexBuffer(*m_indexBuffer);
+    cmd.bindVertexBuffer(0, *m_vertexBuffer);
+
+    for (uint32_t type = 0; type < NUM_MODELS; ++type) {
+        if (m_instanceCounts[type] == 0) continue;
+
+        cmd.bindVertexBuffer(1, *m_instanceBuffers[type][frameIndex]);
+        const auto& mesh = m_modelMeshes[type];
+        cmd.drawIndexed(mesh.indexCount, m_instanceCounts[type], mesh.firstIndex);
     }
 }

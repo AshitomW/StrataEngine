@@ -1,0 +1,225 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2DArray outAlbedoHeight;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2DArray outNormalORM;
+
+uint hashU(uvec2 p, uint seed) {
+    uint h = seed;
+    h ^= p.x * 0x9e3779b9u + 0x7f4a7c15u;
+    h ^= p.y * 0x85ebca6bu + (h << 6) + (h >> 2);
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
+vec2 hash2Periodic(ivec2 p, int period, uint seed) {
+    int px = ((p.x % period) + period) % period;
+    int py = ((p.y % period) + period) % period;
+    uint h1 = hashU(uvec2(uint(px), uint(py)), seed);
+    uint h2 = hashU(uvec2(uint(px), uint(py)), seed + 97u);
+    return vec2(float(h1 & 0xFFFFu) / 65535.0, float(h2 & 0xFFFFu) / 65535.0) * 2.0 - 1.0;
+}
+
+float tileNoise(vec2 uv, int period, uint seed) {
+    vec2 p = uv * float(period);
+    ivec2 i = ivec2(floor(p));
+    vec2 f = fract(p);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+    float n00 = dot(hash2Periodic(i + ivec2(0, 0), period, seed), f - vec2(0.0, 0.0));
+    float n10 = dot(hash2Periodic(i + ivec2(1, 0), period, seed), f - vec2(1.0, 0.0));
+    float n01 = dot(hash2Periodic(i + ivec2(0, 1), period, seed), f - vec2(0.0, 1.0));
+    float n11 = dot(hash2Periodic(i + ivec2(1, 1), period, seed), f - vec2(1.0, 1.0));
+
+    return mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
+}
+
+float tileFbm(vec2 uv, int basePeriod, int octaves, uint seed) {
+    float sum = 0.0;
+    float amp = 0.5;
+    float norm = 0.0;
+    int p = basePeriod;
+    for (int i = 0; i < octaves; ++i) {
+        sum += amp * tileNoise(uv, p, seed + uint(i * 53));
+        norm += amp;
+        p *= 2;
+        amp *= 0.5;
+    }
+    return sum / max(norm, 1e-4);
+}
+
+float tileWorley(vec2 uv, int period, uint seed) {
+    vec2 p = uv * float(period);
+    ivec2 n = ivec2(floor(p));
+    vec2 f = fract(p);
+    float md = 8.0;
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i) {
+            ivec2 g = ivec2(i, j);
+            vec2 o = hash2Periodic(n + g, period, seed) * 0.4 + 0.5;
+            vec2 r = vec2(g) + o - f;
+            md = min(md, dot(r, r));
+        }
+    }
+    return sqrt(md);
+}
+
+void evaluateLayer(int layer, vec2 uv, out vec3 albedo, out float height, out float roughness, out float ao) {
+    if (layer == 0) {
+        // Layer 0: Lush Grass & Clover + Loam crevices
+        float macro = tileFbm(uv, 4, 3, 101u);
+        float clump = smoothstep(0.10, 0.52, tileWorley(uv, 8, 102u));
+        float blades = tileNoise(uv, 32, 103u) * 0.6 + tileNoise(uv, 64, 104u) * 0.4;
+
+        vec3 deepGreen = vec3(0.055, 0.175, 0.038);
+        vec3 lushGreen = vec3(0.120, 0.320, 0.068);
+        vec3 sunlitTip = vec3(0.240, 0.440, 0.100);
+        vec3 loamSoil  = vec3(0.135, 0.092, 0.052);
+
+        albedo = mix(deepGreen, lushGreen, smoothstep(-0.35, 0.35, macro));
+        albedo = mix(albedo, sunlitTip, clamp(blades * 0.6 + 0.25, 0.0, 0.65));
+        albedo = mix(loamSoil, albedo, clump);
+        height = clamp(0.25 + clump * 0.55 + blades * 0.20, 0.0, 1.0);
+        roughness = mix(0.92, 0.78, clump);
+        ao = mix(0.55, 1.0, clump);
+    } else if (layer == 1) {
+        // Layer 1: Stratified Granite Rock & Fissures
+        float strata = sin(uv.y * 6.2831853 * 4.0 + tileFbm(uv, 4, 3, 201u) * 3.5) * 0.5 + 0.5;
+        float grain = tileFbm(uv, 8, 4, 202u);
+        float fissure = smoothstep(0.06, 0.38, tileWorley(uv, 6, 203u));
+
+        vec3 darkGranite  = vec3(0.11, 0.12, 0.14);
+        vec3 lightGranite = vec3(0.26, 0.27, 0.30);
+        vec3 rustVein     = vec3(0.38, 0.22, 0.12);
+
+        albedo = mix(darkGranite, lightGranite, strata);
+        albedo = mix(albedo, rustVein, smoothstep(0.15, 0.45, grain));
+        albedo *= (0.65 + 0.40 * fissure);
+        height = clamp(fissure * 0.65 + strata * 0.20 + grain * 0.25, 0.0, 1.0);
+        roughness = clamp(0.88 - strata * 0.08 + (1.0 - fissure) * 0.10, 0.65, 0.98);
+        ao = mix(0.45, 1.0, fissure);
+    } else if (layer == 2) {
+        // Layer 2: Beach Sand & Pebbles
+        float ripples = sin(uv.x * 6.2831853 * 6.0 + tileFbm(uv, 4, 2, 301u) * 2.5) * 0.5 + 0.5;
+        float pebbles = smoothstep(0.14, 0.38, tileWorley(uv, 16, 302u));
+        float fineGrain = tileNoise(uv, 64, 303u);
+
+        vec3 goldenSand = vec3(0.62, 0.50, 0.31);
+        vec3 pebbleCol  = vec3(0.32, 0.27, 0.21);
+
+        albedo = mix(pebbleCol, goldenSand, pebbles);
+        albedo *= (0.92 + ripples * 0.12 + fineGrain * 0.06);
+        height = clamp(0.35 + ripples * 0.30 + (1.0 - pebbles) * 0.35, 0.0, 1.0);
+        roughness = mix(0.65, 0.85, pebbles);
+        ao = mix(0.75, 1.0, pebbles);
+    } else if (layer == 3) {
+        // Layer 3: Wind-Sculpted Alpine Snow
+        float drifts = tileFbm(uv, 4, 3, 401u) * 0.5 + 0.5;
+        float crust = tileNoise(uv, 32, 402u);
+
+        vec3 blueShadow = vec3(0.70, 0.80, 0.92);
+        vec3 pureSnow   = vec3(0.92, 0.95, 0.98);
+        albedo = mix(blueShadow, pureSnow, clamp(drifts * 0.7 + 0.3, 0.0, 1.0));
+        height = clamp(0.45 + drifts * 0.45 + crust * 0.10, 0.0, 1.0);
+        roughness = clamp(0.34 + crust * 0.12, 0.22, 0.55);
+        ao = mix(0.85, 1.0, drifts);
+    } else if (layer == 4) {
+        // Layer 4: Canyon Red Sandstone
+        float bands = sin(uv.y * 6.2831853 * 7.0 + tileFbm(uv, 4, 3, 501u) * 2.0) * 0.5 + 0.5;
+        float grit = tileFbm(uv, 16, 3, 502u);
+        float crack = smoothstep(0.05, 0.30, tileWorley(uv, 8, 503u));
+
+        vec3 terracotta = vec3(0.56, 0.24, 0.12);
+        vec3 ochre      = vec3(0.72, 0.44, 0.22);
+        vec3 deepClay   = vec3(0.32, 0.13, 0.08);
+
+        albedo = mix(deepClay, terracotta, bands);
+        albedo = mix(albedo, ochre, smoothstep(0.55, 0.90, bands + grit * 0.25));
+        albedo *= (0.72 + 0.30 * crack);
+        height = clamp(bands * 0.45 + crack * 0.45 + grit * 0.15, 0.0, 1.0);
+        roughness = 0.86;
+        ao = mix(0.55, 1.0, crack);
+    } else if (layer == 5) {
+        // Layer 5: Mossy Karst Limestone Cliffs & Damp Crevices
+        float streak = sin(uv.x * 6.2831853 * 6.0 + tileFbm(uv, 4, 3, 601u) * 3.0) * 0.5 + 0.5;
+        float cell = smoothstep(0.06, 0.38, tileWorley(uv, 9, 602u));
+        float micro = tileFbm(uv, 20, 4, 603u);
+        vec3 limestone = vec3(0.32, 0.33, 0.31);
+        vec3 warmStone = vec3(0.42, 0.39, 0.34);
+        vec3 karstMoss = vec3(0.075, 0.195, 0.055);
+
+        albedo = mix(limestone, warmStone, clamp(streak * 0.6 + micro * 0.4 + 0.3, 0.0, 1.0));
+        albedo = mix(albedo, karstMoss, smoothstep(0.18, 0.45, micro) * 0.58);
+        albedo *= (0.68 + 0.36 * cell);
+        height = clamp(cell * 0.68 + micro * 0.22 + streak * 0.10, 0.0, 1.0);
+        roughness = mix(0.65, 0.90, cell);
+        ao = mix(0.45, 1.0, cell);
+    } else if (layer == 6) {
+        // Layer 6: Autumn Forest Floor, Fallen Leaves & Heather
+        float patches = tileFbm(uv, 4, 3, 701u);
+        float leafBed = tileWorley(uv, 14, 702u);
+        float detail  = tileNoise(uv, 64, 703u) * 0.6 + tileNoise(uv, 128, 704u) * 0.4;
+
+        vec3 richLoam   = vec3(0.14, 0.09, 0.05);
+        vec3 goldLeaves = vec3(0.56, 0.34, 0.08);
+        vec3 russetRed  = vec3(0.44, 0.15, 0.06);
+        vec3 mossGreen  = vec3(0.10, 0.19, 0.06);
+
+        float leafMask = smoothstep(0.14, 0.46, leafBed);
+        vec3 leafCol = mix(russetRed, goldLeaves, smoothstep(-0.25, 0.28, patches));
+        albedo = mix(mossGreen, leafCol, smoothstep(-0.35, 0.15, patches));
+        albedo = mix(richLoam, albedo, leafMask);
+        albedo *= (0.84 + detail * 0.22);
+        height = clamp(0.22 + leafMask * 0.58 + detail * 0.20, 0.0, 1.0);
+        roughness = mix(0.92, 0.78, leafMask);
+        ao = mix(0.55, 1.0, leafMask);
+    } else {
+        // Layer 7: Arctic Permafrost, Autumn Moss & Lichen
+        float macro = tileFbm(uv, 4, 4, 801u);
+        float stones = smoothstep(0.10, 0.44, tileWorley(uv, 10, 802u));
+        float detail = tileNoise(uv, 64, 803u);
+
+        vec3 darkPeat   = vec3(0.12, 0.11, 0.10);
+        vec3 amberLichen = vec3(0.36, 0.21, 0.09);
+        vec3 mossGreen  = vec3(0.16, 0.22, 0.12);
+        vec3 frostSlate = vec3(0.32, 0.35, 0.38);
+
+        albedo = mix(darkPeat, mossGreen, smoothstep(-0.25, 0.25, macro));
+        albedo = mix(albedo, amberLichen, smoothstep(0.10, 0.40, macro) * 0.65);
+        albedo = mix(frostSlate, albedo, stones * 0.80);
+        albedo *= (0.85 + detail * 0.18);
+        height = clamp(stones * 0.65 + detail * 0.20 + 0.15, 0.0, 1.0);
+        roughness = mix(0.75, 0.92, stones);
+        ao = mix(0.52, 1.0, stones);
+    }
+}
+
+void main() {
+    ivec3 gid = ivec3(gl_GlobalInvocationID);
+    ivec3 dims = imageSize(outAlbedoHeight);
+    if (gid.x >= dims.x || gid.y >= dims.y || gid.z >= dims.z) return;
+
+    vec2 uv = (vec2(gid.xy) + 0.5) / vec2(dims.xy);
+    vec2 eps = vec2(1.0) / vec2(dims.xy);
+    int layer = gid.z;
+
+    vec3 albedo;
+    float hC, rough, ao;
+    evaluateLayer(layer, uv, albedo, hC, rough, ao);
+
+    vec3 dummyA; float hR, hU, dR, dAO;
+    evaluateLayer(layer, fract(uv + vec2(eps.x, 0.0)), dummyA, hR, dR, dAO);
+    evaluateLayer(layer, fract(uv + vec2(0.0, eps.y)), dummyA, hU, dR, dAO);
+
+    float bumpStrength = (layer == 3) ? 2.2 : 5.0;
+    vec3 tNorm = normalize(vec3((hC - hR) * bumpStrength, (hC - hU) * bumpStrength, 1.0));
+
+    imageStore(outAlbedoHeight, gid, vec4(albedo, hC));
+    imageStore(outNormalORM, gid, vec4(tNorm.x * 0.5 + 0.5, tNorm.y * 0.5 + 0.5, rough, ao));
+}
+

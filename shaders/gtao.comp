@@ -1,0 +1,100 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uDepthTex;
+layout(set = 0, binding = 1, r16f) uniform writeonly image2D outAoRaw;
+
+layout(push_constant) uniform GTAOPC {
+    mat4 invProj;
+    vec4 params; // x: halfW, y: halfH, z: radius, w: frameIndex
+} pc;
+
+const float PI = 3.14159265359;
+
+vec3 reconstructViewPos(vec2 uv, float depth) {
+    vec2 ndc = uv * 2.0 - 1.0;
+    vec4 viewPos = pc.invProj * vec4(ndc, depth, 1.0);
+    return viewPos.xyz / max(viewPos.w, 1e-5);
+}
+
+float interleavedGradientNoise(vec2 pos) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(pos, magic.xy)));
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outAoRaw);
+    if (gid.x >= size.x || gid.y >= size.y) return;
+
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size);
+    float depth = texture(uDepthTex, uv).r;
+    if (depth >= 0.9999) {
+        imageStore(outAoRaw, gid, vec4(1.0));
+        return;
+    }
+
+    vec2 texel = 1.0 / vec2(textureSize(uDepthTex, 0));
+    vec3 posV = reconstructViewPos(uv, depth);
+
+    // Reconstruct normal using minimum-depth-delta neighbors to avoid haloing
+    float dL = texture(uDepthTex, uv - vec2(texel.x, 0.0)).r;
+    float dR = texture(uDepthTex, uv + vec2(texel.x, 0.0)).r;
+    float dD = texture(uDepthTex, uv - vec2(0.0, texel.y)).r;
+    float dU = texture(uDepthTex, uv + vec2(0.0, texel.y)).r;
+
+    vec3 pL = reconstructViewPos(uv - vec2(texel.x, 0.0), dL);
+    vec3 pR = reconstructViewPos(uv + vec2(texel.x, 0.0), dR);
+    vec3 pD = reconstructViewPos(uv - vec2(0.0, texel.y), dD);
+    vec3 pU = reconstructViewPos(uv + vec2(0.0, texel.y), dU);
+
+    vec3 ddx = (abs(dR - depth) < abs(depth - dL)) ? (pR - posV) : (posV - pL);
+    vec3 ddy = (abs(dU - depth) < abs(depth - dD)) ? (pU - posV) : (posV - pD);
+    vec3 normalV = normalize(cross(ddy, ddx));
+    if (dot(normalV, -posV) < 0.0) normalV = -normalV;
+
+    float radius = pc.params.z;
+    float viewDist = max(-posV.z, 1.0);
+    float screenRadiusPx = clamp((radius / viewDist) * (pc.params.y * 0.85), 6.0, 48.0);
+
+    float noise = interleavedGradientNoise(vec2(gid) + pc.params.w * 7.13);
+    float angleOffset = noise * PI;
+
+    const int NUM_DIRS = 4;
+    const int NUM_STEPS = 4;
+
+    float occlusion = 0.0;
+    vec2 halfTexel = 1.0 / vec2(size);
+
+    for (int d = 0; d < NUM_DIRS; ++d) {
+        float angle = angleOffset + (float(d) / float(NUM_DIRS)) * 2.0 * PI;
+        vec2 dir = vec2(cos(angle), sin(angle));
+
+        float maxSinH = 0.12;
+        for (int s = 1; s <= NUM_STEPS; ++s) {
+            float stepFrac = (float(s) + noise * 0.5) / float(NUM_STEPS);
+            vec2 sampleUV = uv + dir * (stepFrac * screenRadiusPx * halfTexel);
+            if (any(lessThan(sampleUV, vec2(0.001))) || any(greaterThan(sampleUV, vec2(0.999)))) continue;
+
+            float sDepth = texture(uDepthTex, sampleUV).r;
+            if (sDepth >= 0.9999) continue;
+
+            vec3 sPos = reconstructViewPos(sampleUV, sDepth);
+            vec3 diff = sPos - posV;
+            float dist2 = dot(diff, diff);
+            float dist = sqrt(max(dist2, 1e-6));
+
+            if (dist < radius * 2.5) {
+                float horiz = dot(diff, normalV) / dist;
+                float falloff = clamp(1.0 - (dist / (radius * 2.5)), 0.0, 1.0);
+                maxSinH = max(maxSinH, horiz * falloff);
+            }
+        }
+        occlusion += max(0.0, maxSinH - 0.12);
+    }
+
+    float ao = clamp(1.0 - (occlusion / float(NUM_DIRS)) * 1.45, 0.15, 1.0);
+    imageStore(outAoRaw, gid, vec4(ao));
+}
+

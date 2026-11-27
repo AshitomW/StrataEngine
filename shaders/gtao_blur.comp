@@ -1,0 +1,44 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uAoRaw;
+layout(set = 0, binding = 1) uniform sampler2D uDepthTex;
+layout(set = 0, binding = 2, r16f) uniform writeonly image2D outAoBlur;
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outAoBlur);
+    if (gid.x >= size.x || gid.y >= size.y) return;
+
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size);
+    vec2 texel = 1.0 / vec2(size);
+    float centerDepth = texture(uDepthTex, uv).r;
+    if (centerDepth >= 0.9999) {
+        imageStore(outAoBlur, gid, vec4(1.0));
+        return;
+    }
+
+    float sumAO = 0.0;
+    float sumWeight = 0.0;
+
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            vec2 suv = uv + vec2(float(x), float(y)) * texel;
+            float sAO = texture(uAoRaw, suv).r;
+            float sDepth = texture(uDepthTex, suv).r;
+
+            float depthDiff = abs(sDepth - centerDepth) * 400.0;
+            float spatialW = exp(-float(x * x + y * y) * 0.25);
+            float rangeW = exp(-depthDiff * depthDiff);
+            float w = spatialW * rangeW;
+
+            sumAO += sAO * w;
+            sumWeight += w;
+        }
+    }
+
+    float blurred = (sumWeight > 1e-5) ? (sumAO / sumWeight) : texture(uAoRaw, uv).r;
+    imageStore(outAoBlur, gid, vec4(blurred));
+}
+

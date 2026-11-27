@@ -29,7 +29,13 @@ public:
         uint32_t height,
         VkFormat format,
         VkImageUsageFlags usage,
-        VkImageAspectFlags aspectMask
+        VkImageAspectFlags aspectMask,
+        uint32_t mipLevels = 1,
+        uint32_t arrayLayers = 1,
+        uint32_t depth = 1,
+        VkImageType imageType = VK_IMAGE_TYPE_2D,
+        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D,
+        VkImageCreateFlags createFlags = 0
     );
     void destroy();
 

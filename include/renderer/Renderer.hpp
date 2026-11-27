@@ -1,15 +1,17 @@
 #pragma once
 
-#include "core/VulkanContext.hpp"
-#include "core/VulkanSwapchain.hpp"
-#include "core/VulkanBuffer.hpp"
-#include "core/PipelineBuilder.hpp"
-#include "core/VulkanResource.hpp"
+#include "rhi/RHIDevice.hpp"
 #include "core/Frustum.hpp"
-#include "renderer/UIOverlay.hpp"
+#include "renderer/AtmosphereRenderer.hpp"
 #include "renderer/FoliageRenderer.hpp"
+#include "renderer/GTAORenderer.hpp"
+#include "renderer/MaterialLibrary.hpp"
+#include "renderer/PrecipitationRenderer.hpp"
+#include "renderer/ShadowRenderer.hpp"
 #include "renderer/SkyRenderer.hpp"
+#include "renderer/VolumetricRenderer.hpp"
 #include "renderer/WaterRenderer.hpp"
+#include "renderer/WeatherSystem.hpp"
 #include "renderer/FrameContext.hpp"
 #include "renderer/Atmosphere.hpp"
 #include "camera/Camera.hpp"
@@ -17,13 +19,14 @@
 #include "terrain/TerrainTypes.hpp"
 #include <array>
 #include <memory>
+#include <string>
 
 struct HUDInfo {
     float fps = 0.0f;
     size_t activeChunks = 0;
     bool showHUD = true;
     bool mouseCaptured = true;
-    const char* presetName = "Custom";
+    std::string presetName = "Mountains";
 };
 
 struct FoliageKey {
@@ -35,6 +38,10 @@ struct FoliageKey {
     uint32_t presetType = 9999;
     float waterHeight = -9999.0f;
     float foliageDensity = -1.0f;
+    float amplitude = -1.0f;
+    float frequency = -1.0f;
+    float warpStrength = -1.0f;
+    float mountainPower = -1.0f;
 
     bool operator==(const FoliageKey& o) const {
         return seed == o.seed &&
@@ -44,76 +51,79 @@ struct FoliageKey {
             showFoliage == o.showFoliage &&
             presetType == o.presetType &&
             waterHeight == o.waterHeight &&
-            foliageDensity == o.foliageDensity;
+            foliageDensity == o.foliageDensity &&
+            amplitude == o.amplitude &&
+            frequency == o.frequency &&
+            warpStrength == o.warpStrength &&
+            mountainPower == o.mountainPower;
     }
 };
 
 class Renderer {
 public:
-    static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+    static constexpr uint32_t BLOOM_MIP_COUNT = 5;
 
-    Renderer(const VulkanContext& context, GLFWwindow* window, VkDescriptorSetLayout chunkSSBOSetLayout);
+    Renderer(rhi::RHIDevice& device, GLFWwindow* window);
     ~Renderer();
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    void renderFrame(
+    bool renderFrame(
         GLFWwindow* window,
         const Camera& camera,
         ChunkManager& chunkManager,
-        const TerrainConfig& config,
-        const HUDInfo& hudInfo,
+        TerrainConfig& config,
+        HUDInfo& hudInfo,
         float time
     );
 
-    void onWindowResize(GLFWwindow* window);
     float getAspectRatio() const;
 
 private:
-    void createGlobalDescriptorSetLayout();
-    void createGlobalDescriptorResources();
-    void createPipelines(VkDescriptorSetLayout chunkSSBOSetLayout);
-    void createCommandBuffers();
-    void createSyncObjects();
-
-    void updateUBO(uint32_t currentFrame, const Camera& camera, const TerrainConfig& config, float time);
-
-    bool beginFrame(GLFWwindow* window, uint32_t& imageIndex);
-    void recordPass(VkCommandBuffer cmd, uint32_t imageIndex, const Camera& camera,
-                    ChunkManager& chunkManager, const TerrainConfig& config,
-                    const HUDInfo& hudInfo, float time);
-    void submitFrame(VkCommandBuffer cmd, uint32_t imageIndex, GLFWwindow* window);
-
-    void drawHUD(const Camera& camera, const TerrainConfig& config, const HUDInfo& hudInfo);
+    void createUBOBuffers();
+    void createPipelines();
+    void createScreenResources(uint32_t width, uint32_t height);
+    void updateUBO(uint32_t frameIndex, const Camera& camera, const TerrainConfig& config, float time);
+    void runBloomPasses(rhi::RHICommandList& cmd, const TerrainConfig& config);
+    void drawImGui(const Camera& camera, ChunkManager& chunkManager, TerrainConfig& config, HUDInfo& hudInfo);
 
 private:
-    const VulkanContext& m_context;
-    VkDevice m_device = VK_NULL_HANDLE;
+    rhi::RHIDevice& m_device;
 
-    std::unique_ptr<VulkanSwapchain> m_swapchain;
-    std::unique_ptr<UIOverlay> m_uiOverlay;
+    std::unique_ptr<AtmosphereRenderer> m_atmosphereRenderer;
+    std::unique_ptr<ShadowRenderer> m_shadowRenderer;
+    std::unique_ptr<MaterialLibrary> m_materialLibrary;
+    std::unique_ptr<GTAORenderer> m_gtaoRenderer;
     std::unique_ptr<FoliageRenderer> m_foliageRenderer;
+    std::unique_ptr<PrecipitationRenderer> m_precipitationRenderer;
+    std::unique_ptr<WeatherSystem> m_weatherSystem;
     std::unique_ptr<SkyRenderer> m_skyRenderer;
+    std::unique_ptr<VolumetricRenderer> m_volumetricRenderer;
     std::unique_ptr<WaterRenderer> m_waterRenderer;
+    GlobalUBO m_currentUBO{};
 
-    vkh::DescriptorSetLayoutHandle m_globalSetLayout;
-    vkh::DescriptorPoolHandle m_globalDescriptorPool;
-    std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_globalDescriptorSets{};
+    std::array<std::unique_ptr<rhi::RHIBuffer>, MAX_FRAMES_IN_FLIGHT> m_uboBuffers;
+    std::unique_ptr<rhi::RHIPipeline> m_solidPipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_wireframePipeline;
 
-    std::array<VulkanBuffer, MAX_FRAMES_IN_FLIGHT> m_uboBuffers;
-    std::array<void*, MAX_FRAMES_IN_FLIGHT> m_uboMapped{};
+    uint32_t m_screenWidth = 0;
+    uint32_t m_screenHeight = 0;
+    std::unique_ptr<rhi::RHITexture> m_hdrColor;
+    std::unique_ptr<rhi::RHITexture> m_sceneDepth;
+    std::unique_ptr<rhi::RHITexture> m_opaqueColorCopy;
+    std::unique_ptr<rhi::RHITexture> m_opaqueDepthCopy;
+    std::unique_ptr<rhi::RHITexture> m_blackFallbackTex;
+    std::unique_ptr<rhi::RHITexture> m_whiteFallbackTex;
+    std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT> m_bloomDownMips;
+    std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT - 1> m_bloomUpMips;
+    std::unique_ptr<rhi::RHISampler> m_linearSampler;
 
-    vkh::PipelineLayoutHandle m_pipelineLayout;
-    vkh::PipelineHandle m_solidPipeline;
-    vkh::PipelineHandle m_wireframePipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_bloomDownPipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_bloomUpPipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_postProcessPipeline;
 
-    std::array<VkCommandBuffer, MAX_FRAMES_IN_FLIGHT> m_commandBuffers{};
-    std::array<vkh::SemaphoreHandle, MAX_FRAMES_IN_FLIGHT> m_imageAvailableSemaphores;
-    std::array<vkh::SemaphoreHandle, MAX_FRAMES_IN_FLIGHT> m_renderFinishedSemaphores;
-    std::array<vkh::FenceHandle, MAX_FRAMES_IN_FLIGHT> m_inFlightFences;
-
-    uint32_t m_currentFrame = 0;
-    bool m_framebufferResized = false;
     FoliageKey m_lastFoliageKey;
+    float m_lastTime = 0.0f;
 };

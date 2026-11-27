@@ -39,59 +39,41 @@ inline State compute(float timeOfDay) {
     s.sunDir = glm::normalize(glm::vec3(cosElev * 0.80f, sinElev, 0.35f));
     glm::vec3 moonDir = glm::normalize(glm::vec3(-cosElev * 0.80f, -sinElev, -0.35f));
 
-    if (sinElev >= 0.15f) {
-        float f = smoothstep(0.15f, 0.70f, sinElev);
-        s.skyZenith = glm::mix(SUNSET_ZENITH, NOON_ZENITH, f);
-        s.skyHorizon = glm::mix(SUNSET_HORIZON, NOON_HORIZON, f);
-        s.sunColor = glm::mix(SUNSET_SUN * SUNSET_SUN_INTENSITY, NOON_SUN * NOON_SUN_INTENSITY, f);
-        s.ambientIntensity = glm::mix(SUNSET_AMBIENT, NOON_AMBIENT, f);
-        s.dayFactor = 1.0f;
-        s.starFactor = 0.0f;
-    } else if (sinElev >= 0.0f) {
-        float f = smoothstep(0.0f, 0.15f, sinElev);
-        s.skyZenith = glm::mix(DUSK_ZENITH, SUNSET_ZENITH, f);
-        s.skyHorizon = glm::mix(SUNSET_HORIZON, SUNSET_HORIZON, f);
-        s.sunColor = glm::mix(DUSK_SUN * DUSK_SUN_INTENSITY, SUNSET_SUN * SUNSET_SUN_INTENSITY, f);
-        s.ambientIntensity = glm::mix(DUSK_AMBIENT, SUNSET_AMBIENT, f);
-        s.dayFactor = glm::mix(0.35f, 1.0f, f);
-        s.starFactor = 0.0f;
-    } else if (sinElev >= -0.18f) {
-        float f = smoothstep(-0.18f, 0.0f, sinElev);
-        s.skyZenith = glm::mix(NIGHT_ZENITH, DUSK_ZENITH, f);
-        s.skyHorizon = glm::mix(NIGHT_HORIZON, DUSK_HORIZON, f);
-        s.sunColor = glm::mix(NIGHT_MOON * NIGHT_MOON_INTENSITY, DUSK_SUN * DUSK_SUN_INTENSITY, f);
-        s.ambientIntensity = glm::mix(NIGHT_AMBIENT, DUSK_AMBIENT, f);
-        s.dayFactor = glm::mix(0.0f, 0.35f, f);
-        s.starFactor = 1.0f - f;
-    } else {
-        s.skyZenith = NIGHT_ZENITH;
-        s.skyHorizon = NIGHT_HORIZON;
-        s.sunColor = NIGHT_MOON * NIGHT_MOON_INTENSITY;
-        s.ambientIntensity = NIGHT_AMBIENT;
-        s.dayFactor = 0.0f;
-        s.starFactor = 1.0f;
-    }
+    float tHorizonToDay = smoothstep(-0.02f, 0.72f, sinElev);
+    float tDuskToSunset = smoothstep(-0.14f, 0.14f, sinElev);
+    float tNightToDusk = smoothstep(-0.28f, -0.02f, sinElev);
 
-    if (sinElev >= -0.05f) {
-        float blend = smoothstep(-0.05f, 0.10f, sinElev);
-        s.activeLightDir = glm::normalize(glm::mix(moonDir, s.sunDir, blend));
-    } else {
-        s.activeLightDir = moonDir;
-    }
+    glm::vec3 zenithDusk   = glm::mix(NIGHT_ZENITH, DUSK_ZENITH, tNightToDusk);
+    glm::vec3 zenithSunset = glm::mix(zenithDusk, SUNSET_ZENITH, tDuskToSunset);
+    s.skyZenith            = glm::mix(zenithSunset, NOON_ZENITH, tHorizonToDay);
 
-    if (sinElev > 0.15f) {
-        s.skyClearColor = glm::vec4(0.025f, 0.090f, 0.280f, 1.0f);
-    } else if (sinElev > -0.15f) {
-        float f = (sinElev + 0.15f) / 0.30f;
-        s.skyClearColor = glm::vec4(
-            0.002f * (1.0f - f) + 0.025f * f,
-            0.004f * (1.0f - f) + 0.090f * f,
-            0.012f * (1.0f - f) + 0.280f * f,
-            1.0f
-        );
-    } else {
-        s.skyClearColor = glm::vec4(0.002f, 0.004f, 0.012f, 1.0f);
-    }
+    glm::vec3 horizDusk    = glm::mix(NIGHT_HORIZON, DUSK_HORIZON, tNightToDusk);
+    glm::vec3 horizSunset  = glm::mix(horizDusk, SUNSET_HORIZON, tDuskToSunset);
+    s.skyHorizon           = glm::mix(horizSunset, NOON_HORIZON, tHorizonToDay);
+
+    float sunWeight = smoothstep(-0.06f, 0.12f, sinElev);
+    float moonWeight = smoothstep(0.02f, -0.18f, sinElev);
+    glm::vec3 sunCol = glm::mix(DUSK_SUN * DUSK_SUN_INTENSITY,
+                                glm::mix(SUNSET_SUN * SUNSET_SUN_INTENSITY, NOON_SUN * NOON_SUN_INTENSITY, tHorizonToDay),
+                                tDuskToSunset);
+    glm::vec3 moonCol = NIGHT_MOON * NIGHT_MOON_INTENSITY;
+    s.sunColor = sunCol * sunWeight + moonCol * moonWeight;
+
+    float ambTwilight = glm::mix(NIGHT_AMBIENT, DUSK_AMBIENT, tNightToDusk);
+    float ambSunset   = glm::mix(ambTwilight, SUNSET_AMBIENT, tDuskToSunset);
+    s.ambientIntensity = glm::mix(ambSunset, NOON_AMBIENT, tHorizonToDay);
+
+    s.dayFactor = smoothstep(-0.14f, 0.20f, sinElev);
+    s.starFactor = 1.0f - smoothstep(-0.22f, 0.04f, sinElev);
+
+    // Switch shadow/directional light seamlessly while direct sun/moon intensity is near zero
+    s.activeLightDir = (sinElev >= -0.05f) ? s.sunDir : moonDir;
+
+    float clearBlend = smoothstep(-0.22f, 0.25f, sinElev);
+    s.skyClearColor = glm::vec4(
+        glm::mix(glm::vec3(0.002f, 0.004f, 0.012f), glm::vec3(0.025f, 0.090f, 0.280f), clearBlend),
+        1.0f
+    );
 
     return s;
 }

@@ -12,3 +12,15 @@ out/
 
 # Compiled binary assets if generated outside build
 shaders/*.spv
+shaders/*.metal
+
+# ImGui runtime layout
+imgui.ini
+
+# Heavy unused imgui subdirectories
+vendor/imgui/examples/
+vendor/imgui/docs/
+vendor/imgui/misc/
+vendor/imgui/.git/
+vendor/imgui/.github/
+

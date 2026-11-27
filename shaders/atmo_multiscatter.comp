@@ -1,0 +1,122 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uTransmittanceLUT;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outMultiScatter;
+
+const float PI = 3.14159265359;
+const float R_PLANET = 6360.0;
+const float R_ATMO   = 6460.0;
+
+const vec3 RAYLEIGH_SCATTER = vec3(5.802e-3, 13.558e-3, 33.100e-3);
+const float MIE_SCATTER     = 3.996e-3;
+const float MIE_ABSORB      = 4.400e-3;
+const vec3 OZONE_ABSORB     = vec3(0.650e-3, 1.881e-3, 0.085e-3);
+
+vec2 transmittanceUV(float r, float cosTheta) {
+    float H = sqrt(max(0.0, R_ATMO * R_ATMO - R_PLANET * R_PLANET));
+    float rho = sqrt(max(0.0, r * r - R_PLANET * R_PLANET));
+    float disc = r * r * (cosTheta * cosTheta - 1.0) + R_ATMO * R_ATMO;
+    float d = max(0.0, -r * cosTheta + sqrt(max(0.0, disc)));
+    float dMin = R_ATMO - r;
+    float dMax = rho + H;
+    float xMu = clamp((d - dMin) / max(dMax - dMin, 1e-5), 0.0, 1.0);
+    float xR = clamp(rho / max(H, 1e-5), 0.0, 1.0);
+    return vec2(xMu, xR);
+}
+
+bool hitSphere(vec3 ro, vec3 rd, float rad, out float tOut) {
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - rad * rad;
+    float disc = b * b - c;
+    if (disc < 0.0) { tOut = -1.0; return false; }
+    float s = sqrt(disc);
+    float t0 = -b - s;
+    float t1 = -b + s;
+    if (t1 < 0.0) { tOut = -1.0; return false; }
+    tOut = (t0 >= 0.0) ? t0 : t1;
+    return true;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outMultiScatter);
+    if (gid.x >= size.x || gid.y >= size.y) return;
+
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size);
+    float sunCos = uv.x * 2.0 - 1.0;
+    float sunSin = sqrt(max(0.0, 1.0 - sunCos * sunCos));
+    vec3 sunDir = vec3(sunSin, sunCos, 0.0);
+
+    float alt = clamp(uv.y, 0.001, 0.999) * (R_ATMO - R_PLANET);
+    vec3 ro = vec3(0.0, R_PLANET + alt, 0.0);
+
+    const int NUM_DIRS = 64;
+    const float GOLDEN_ANGLE = 2.39996323;
+    const float INV_4PI = 1.0 / (4.0 * PI);
+
+    vec3 lumTotal = vec3(0.0);
+    vec3 fmsTotal = vec3(0.0);
+
+    for (int d = 0; d < NUM_DIRS; ++d) {
+        float y = 1.0 - (float(d) + 0.5) / float(NUM_DIRS) * 2.0;
+        float rad = sqrt(max(0.0, 1.0 - y * y));
+        float phi = GOLDEN_ANGLE * float(d);
+        vec3 rd = vec3(cos(phi) * rad, y, sin(phi) * rad);
+
+        float tPlanet = -1.0;
+        float tAtmo = -1.0;
+        bool hitPlanet = hitSphere(ro, rd, R_PLANET, tPlanet);
+        hitSphere(ro, rd, R_ATMO, tAtmo);
+        float maxDist = hitPlanet ? tPlanet : tAtmo;
+
+        const int STEPS = 16;
+        float stepLen = maxDist / float(STEPS);
+
+        vec3 throughput = vec3(1.0);
+        vec3 L = vec3(0.0);
+        vec3 fms = vec3(0.0);
+
+        for (int s = 0; s < STEPS; ++s) {
+            float t = (float(s) + 0.5) * stepLen;
+            vec3 p = ro + rd * t;
+            float r = length(p);
+            float h = max(r - R_PLANET, 0.0);
+
+            float rDens = exp(-h / 8.0);
+            float mDens = exp(-h / 1.2);
+            float oDens = max(0.0, 1.0 - abs(h - 25.0) / 15.0);
+
+            vec3 scatter = RAYLEIGH_SCATTER * rDens + vec3(MIE_SCATTER * mDens);
+            vec3 extinct = scatter + vec3(MIE_ABSORB * mDens) + OZONE_ABSORB * oDens;
+
+            vec3 stepTrans = exp(-extinct * stepLen);
+            vec3 sunTrans = texture(uTransmittanceLUT, transmittanceUV(r, dot(p / r, sunDir))).rgb;
+
+            float gDummy;
+            bool sunOccluded = hitSphere(p, sunDir, R_PLANET, gDummy);
+            vec3 inScatter = sunOccluded ? vec3(0.0) : (scatter * INV_4PI * sunTrans);
+
+            vec3 safeExt = max(extinct, vec3(1e-6));
+            L += throughput * (inScatter - inScatter * stepTrans) / safeExt;
+            fms += throughput * (scatter * INV_4PI - scatter * INV_4PI * stepTrans) / safeExt;
+            throughput *= stepTrans;
+        }
+
+        if (hitPlanet) {
+            vec3 pHit = ro + rd * tPlanet;
+            float rHit = length(pHit);
+            vec3 up = pHit / rHit;
+            vec3 sunTrans = texture(uTransmittanceLUT, transmittanceUV(rHit, dot(up, sunDir))).rgb;
+            L += throughput * sunTrans * max(dot(up, sunDir), 0.0) * 0.25 / PI;
+        }
+
+        lumTotal += L * (4.0 * PI / float(NUM_DIRS));
+        fmsTotal += fms * (4.0 * PI / float(NUM_DIRS));
+    }
+
+    vec3 psi = lumTotal / max(vec3(1.0) - fmsTotal, vec3(0.05));
+    imageStore(outMultiScatter, gid, vec4(psi, 1.0));
+}
+

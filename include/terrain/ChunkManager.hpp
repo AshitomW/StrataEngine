@@ -1,32 +1,37 @@
 #pragma once
 
-#include "core/VulkanContext.hpp"
-#include "core/VulkanBuffer.hpp"
-#include "core/VulkanResource.hpp"
+#include "rhi/RHIDevice.hpp"
 #include "core/Frustum.hpp"
 #include "terrain/TerrainChunk.hpp"
 #include "terrain/ComputeTerrainGenerator.hpp"
 #include "terrain/TerrainTypes.hpp"
-#include <vector>
-#include <memory>
 #include <array>
+#include <memory>
+#include <vector>
 
 class ChunkManager {
 public:
-    ChunkManager(const VulkanContext& context, int radius = 3);
-    ~ChunkManager();
+    explicit ChunkManager(rhi::RHIDevice& device, int radius = 3);
+    ~ChunkManager() = default;
 
     ChunkManager(const ChunkManager&) = delete;
     ChunkManager& operator=(const ChunkManager&) = delete;
 
-    void update(const VulkanContext& context, const glm::vec3& cameraPos, const TerrainConfig& config);
-    void regenerateAll(const VulkanContext& context, const TerrainConfig& config);
-    void setRadius(const VulkanContext& context, int newRadius, const TerrainConfig& config);
+    void update(rhi::RHIDevice& device, const glm::vec3& cameraPos, const TerrainConfig& config);
+    void updateCoordsAndLOD(const glm::vec3& cameraPos, const TerrainConfig& config);
+    void recordDirtyChunkCompute(rhi::RHICommandList& cmd, const TerrainConfig& config, uint32_t maxChunksPerFrame);
+    void regenerateAll(rhi::RHIDevice& device, const TerrainConfig& config);
+    void setRadius(rhi::RHIDevice& device, int newRadius, const TerrainConfig& config);
 
-    void recordRenderCommands(VkCommandBuffer commandBuffer, VkPipelineLayout graphicsPipelineLayout,
-                              const Frustum& frustum, const TerrainConfig& config);
+    void recordRenderCommands(rhi::RHICommandList& cmd, const Frustum& frustum, const TerrainConfig& config);
+    void recordShadowCommands(
+        rhi::RHICommandList& cmd,
+        uint32_t cascadeIndex,
+        const glm::vec3& cameraPos,
+        float cascadeSplitDist,
+        const TerrainConfig& config
+    );
 
-    VkDescriptorSetLayout getSSBOSetLayout() const { return m_ssboSetLayout.get(); }
     size_t getChunkCount() const { return m_chunks.size(); }
     int getRadius() const { return m_radius; }
     int getCenterChunkX() const { return m_centerChunkX; }
@@ -35,9 +40,8 @@ public:
     const std::vector<glm::vec2>& getChunkOrigins() const { return m_chunkOrigins; }
 
 private:
-    void createDescriptorResources();
-    void createLODIndexBuffers(const VulkanContext& context);
-    void rebuildChunks(const VulkanContext& context);
+    void createLODIndexBuffers(rhi::RHIDevice& device);
+    void rebuildChunks(rhi::RHIDevice& device);
     void refreshChunkOrigins();
 
     static uint32_t getLODGridRes(uint32_t lod) {
@@ -49,20 +53,22 @@ private:
         return 1u << lod;
     }
 
+    static size_t toroidalIndex(int cx, int cz, int dim) {
+        int sx = ((cx % dim) + dim) % dim;
+        int sz = ((cz % dim) + dim) % dim;
+        return static_cast<size_t>(sz * dim + sx);
+    }
+
 private:
-    VkDevice m_device = VK_NULL_HANDLE;
     int m_radius = 3;
     int m_centerChunkX = 0;
     int m_centerChunkZ = 0;
-
-    vkh::DescriptorPoolHandle m_descriptorPool;
-    vkh::DescriptorSetLayoutHandle m_ssboSetLayout;
 
     std::unique_ptr<ComputeTerrainGenerator> m_generator;
     std::vector<TerrainChunk> m_chunks;
     std::vector<glm::vec2> m_chunkOrigins;
     std::vector<TerrainChunk*> m_dirtyChunks;
 
-    std::array<VulkanBuffer, NUM_LOD_LEVELS> m_lodIndexBuffers;
+    std::array<std::unique_ptr<rhi::RHIBuffer>, NUM_LOD_LEVELS> m_lodIndexBuffers;
     std::array<uint32_t, NUM_LOD_LEVELS> m_lodIndexCounts{};
 };

@@ -1,0 +1,93 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outDispFoam;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outNormalSlope;
+
+layout(push_constant) uniform WaterSimPC {
+    vec4 simParams;    // x: time, y: waveAmplitude, z: waveSpeed, w: windSpeed
+    vec4 windDirPatch; // xy: windDir, z: patchSize, w: choppiness
+} pc;
+
+const float PI = 3.14159265359;
+const float G = 9.81;
+
+float jonswapEnergy(float kLen, float windSpeed, float cosTheta) {
+    float omega = sqrt(G * kLen);
+    float peakOmega = 0.85 * G / max(windSpeed, 1.5);
+    float ratio = omega / max(peakOmega, 1e-4);
+
+    float alpha = 0.0081;
+    float sigma = (omega <= peakOmega) ? 0.07 : 0.09;
+    float r = exp(-pow(omega - peakOmega, 2.0) / (2.0 * sigma * sigma * peakOmega * peakOmega));
+    float jonswap = (alpha * G * G / pow(max(omega, 0.1), 5.0)) * exp(-1.25 * pow(1.0 / max(ratio, 0.05), 4.0)) * pow(3.3, r);
+
+    float dirSpread = pow(max(cosTheta, 0.0), 2.5) * 0.85 + 0.15;
+    return max(jonswap * dirSpread, 0.0);
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outDispFoam);
+    if (gid.x >= size.x || gid.y >= size.y) return;
+
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size);
+    float patchSize = max(pc.windDirPatch.z, 16.0);
+    vec2 pos = uv * patchSize;
+
+    float time = pc.simParams.x * pc.simParams.z;
+    float ampScale = pc.simParams.y;
+    float windSpeed = pc.simParams.w;
+    vec2 windDir = normalize(pc.windDirPatch.xy);
+    float chop = pc.windDirPatch.w;
+
+    // 16 tileable integer-mode directional wave components spanning swell -> capillary chop
+    const int NUM_WAVES = 16;
+    const ivec2 modes[16] = ivec2[16](
+        ivec2( 1,  0), ivec2( 1,  1), ivec2( 0,  1), ivec2(-1,  1),
+        ivec2( 2,  1), ivec2( 1, -2), ivec2( 2, -1), ivec2(-2,  2),
+        ivec2( 3,  1), ivec2( 2,  3), ivec2(-3,  2), ivec2( 4, -2),
+        ivec2( 5,  2), ivec2( 4,  5), ivec2(-6,  3), ivec2( 7, -4)
+    );
+
+    vec3 disp = vec3(0.0);
+    vec2 grad = vec2(0.0);
+    float jacobian = 0.0;
+
+    for (int i = 0; i < NUM_WAVES; ++i) {
+        vec2 kVec = (2.0 * PI / patchSize) * vec2(modes[i]);
+        float kLen = length(kVec);
+        vec2 kDir = kVec / max(kLen, 1e-5);
+
+        float cosTheta = dot(kDir, windDir);
+        float energy = jonswapEnergy(kLen, windSpeed, cosTheta);
+        float wAmp = sqrt(energy) * 0.42 * ampScale;
+        if (wAmp <= 1e-5) continue;
+
+        float omega = sqrt(G * kLen);
+        float phaseOffset = float(i) * 1.6180339;
+        float phase = dot(kVec, pos) - omega * time + phaseOffset;
+
+        float s = sin(phase);
+        float c = cos(phase);
+
+        float q = clamp(chop / (kLen * wAmp * 4.0 + 1.0), 0.0, 0.90);
+
+        disp.x += q * wAmp * kDir.x * c;
+        disp.z += q * wAmp * kDir.y * c;
+        disp.y += wAmp * s;
+
+        float wa = kLen * wAmp;
+        grad.x += kDir.x * wa * c;
+        grad.y += kDir.y * wa * c;
+        jacobian += q * wa * s;
+    }
+
+    vec3 normal = normalize(vec3(-grad.x, 1.0, -grad.y));
+    float foam = clamp(jacobian * 0.85 + (1.0 - normal.y) * 1.6, 0.0, 1.0);
+
+    imageStore(outDispFoam, gid, vec4(disp, foam));
+    imageStore(outNormalSlope, gid, vec4(normal, 1.0 - normal.y));
+}
+

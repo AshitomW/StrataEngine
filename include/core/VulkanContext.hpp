@@ -54,6 +54,8 @@ public:
     VkCommandPool getCommandPool() const { return m_commandPool; }
     VmaAllocator getAllocator() const { return m_allocator; }
     const QueueFamilyIndices& getQueueFamilies() const { return m_queueIndices; }
+    const std::string& getDeviceName() const { return m_deviceName; }
+    float getTimestampPeriod() const { return m_timestampPeriod; }
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) const;
@@ -88,4 +90,6 @@ private:
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     VmaAllocator m_allocator = VK_NULL_HANDLE;
     bool m_portabilitySubsetSupported = false;
+    std::string m_deviceName = "Unknown Vulkan GPU";
+    float m_timestampPeriod = 1.0f;
 };

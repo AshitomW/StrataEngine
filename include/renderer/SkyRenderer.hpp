@@ -1,25 +1,20 @@
 #pragma once
 
-#include "core/VulkanContext.hpp"
-#include "core/PipelineBuilder.hpp"
-#include "core/VulkanResource.hpp"
+#include "rhi/RHIDevice.hpp"
+#include "renderer/AtmosphereRenderer.hpp"
 #include "renderer/FrameContext.hpp"
+#include <memory>
 
 class SkyRenderer {
 public:
-    SkyRenderer(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout);
-    ~SkyRenderer();
+    explicit SkyRenderer(rhi::RHIDevice& device);
+    ~SkyRenderer() = default;
 
     SkyRenderer(const SkyRenderer&) = delete;
     SkyRenderer& operator=(const SkyRenderer&) = delete;
 
-    void recordRenderCommands(const FrameContext& frame);
+    void recordRenderCommands(const FrameContext& frame, const AtmosphereRenderer& atmosphere);
 
 private:
-    void createPipeline(const VulkanContext& context, VkRenderPass renderPass, VkDescriptorSetLayout uboSetLayout);
-
-private:
-    VkDevice m_device = VK_NULL_HANDLE;
-    vkh::PipelineHandle m_pipeline;
-    vkh::PipelineLayoutHandle m_pipelineLayout;
+    std::unique_ptr<rhi::RHIPipeline> m_pipeline;
 };

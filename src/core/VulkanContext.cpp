@@ -208,6 +208,11 @@ void VulkanContext::pickPhysicalDevice() {
             break;
         }
     }
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
+    m_deviceName = props.deviceName;
+    m_timestampPeriod = props.limits.timestampPeriod;
 }
 
 void VulkanContext::createLogicalDevice() {
@@ -228,9 +233,12 @@ void VulkanContext::createLogicalDevice() {
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
+
     VkPhysicalDeviceFeatures deviceFeatures{};
-    deviceFeatures.samplerAnisotropy = VK_FALSE;
-    deviceFeatures.fillModeNonSolid = VK_TRUE;
+    deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
+    deviceFeatures.fillModeNonSolid = supportedFeatures.fillModeNonSolid;
 
     std::vector<const char*> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
