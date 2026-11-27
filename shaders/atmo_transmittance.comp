@@ -1,0 +1,64 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outTransmittance;
+
+const float R_PLANET = 6360.0;
+const float R_ATMO   = 6460.0;
+
+const vec3 RAYLEIGH_SCATTER = vec3(5.802e-3, 13.558e-3, 33.100e-3);
+const float MIE_SCATTER     = 3.996e-3;
+const float MIE_ABSORB      = 4.400e-3;
+const vec3 OZONE_ABSORB     = vec3(0.650e-3, 1.881e-3, 0.085e-3);
+
+float raySphereDist(vec3 ro, vec3 rd, float rad) {
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - rad * rad;
+    float disc = b * b - c;
+    if (disc < 0.0) return -1.0;
+    return -b + sqrt(disc);
+}
+
+vec3 computeExtinction(float h) {
+    float rDensity = exp(-max(h, 0.0) / 8.0);
+    float mDensity = exp(-max(h, 0.0) / 1.2);
+    float oDensity = max(0.0, 1.0 - abs(h - 25.0) / 15.0);
+    return RAYLEIGH_SCATTER * rDensity + (MIE_SCATTER + MIE_ABSORB) * mDensity + OZONE_ABSORB * oDensity;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outTransmittance);
+    if (gid.x >= size.x || gid.y >= size.y) return;
+
+    vec2 uv = (vec2(gid) + 0.5) / vec2(size);
+
+    float H = sqrt(R_ATMO * R_ATMO - R_PLANET * R_PLANET);
+    float rho = H * uv.y;
+    float r = sqrt(rho * rho + R_PLANET * R_PLANET);
+
+    float dMin = R_ATMO - r;
+    float dMax = rho + H;
+    float d = dMin + uv.x * (dMax - dMin);
+    float cosTheta = (d <= 0.0001) ? 1.0 : clamp((H * H - rho * rho - d * d) / (2.0 * r * d), -1.0, 1.0);
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+
+    vec3 ro = vec3(0.0, r, 0.0);
+    vec3 rd = vec3(sinTheta, cosTheta, 0.0);
+
+    float distToTop = raySphereDist(ro, rd, R_ATMO);
+    const int STEPS = 40;
+    float stepLen = distToTop / float(STEPS);
+
+    vec3 opticalDepth = vec3(0.0);
+    for (int i = 0; i < STEPS; ++i) {
+        float t = (float(i) + 0.5) * stepLen;
+        vec3 p = ro + rd * t;
+        float h = length(p) - R_PLANET;
+        opticalDepth += computeExtinction(h) * stepLen;
+    }
+
+    vec3 transmittance = exp(-opticalDepth);
+    imageStore(outTransmittance, gid, vec4(transmittance, 1.0));
+}

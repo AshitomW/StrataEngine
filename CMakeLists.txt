@@ -42,6 +42,13 @@ set(SHADER_BIN ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${SHADER_BIN})
 
 set(SHADERS
+    atmo_transmittance.comp
+    atmo_multiscatter.comp
+    atmo_skyview.comp
+    bloom_downsample.comp
+    bloom_upsample.comp
+    postprocess.vert
+    postprocess.frag
     terrain.comp
     terrain.vert
     terrain.frag
@@ -116,6 +123,7 @@ set(ENGINE_SOURCES
     src/main.cpp
     src/app/Application.cpp
     src/camera/Camera.cpp
+    src/renderer/AtmosphereRenderer.cpp
     src/renderer/FoliageRenderer.cpp
     src/renderer/Renderer.cpp
     src/renderer/SkyRenderer.cpp

@@ -21,6 +21,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 skyColorHorizon;
     vec4 terrainParams;
     vec4 biomeParams;
+    vec4 postParams;
+    vec4 atmosphereParams;
 } ubo;
 
 layout(push_constant) uniform WaterPC {

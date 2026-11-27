@@ -50,6 +50,33 @@ std::string readMetalShaderSource(const std::string& baseName) {
     throw std::runtime_error("Failed to open Metal shader file: " + filename);
 }
 
+MTLPixelFormat toMTLPixelFormat(Format fmt) {
+    switch (fmt) {
+        case Format::RGBA8_UNORM: return MTLPixelFormatRGBA8Unorm;
+        case Format::BGRA8_SRGB:  return MTLPixelFormatBGRA8Unorm_sRGB;
+        case Format::RGBA16F:     return MTLPixelFormatRGBA16Float;
+        case Format::R16F:        return MTLPixelFormatR16Float;
+        case Format::RG16F:       return MTLPixelFormatRG16Float;
+        case Format::D32F:        return MTLPixelFormatDepth32Float;
+        case Format::R32F:        return MTLPixelFormatR32Float;
+        case Format::RG32F:       return MTLPixelFormatRG32Float;
+        case Format::RGBA32F:     return MTLPixelFormatRGBA32Float;
+        default:                  return MTLPixelFormatRGBA16Float;
+    }
+}
+
+MTLSamplerMinMagFilter toMTLFilter(Filter f) {
+    return (f == Filter::Nearest) ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+}
+
+MTLSamplerAddressMode toMTLAddressMode(AddressMode mode) {
+    switch (mode) {
+        case AddressMode::Repeat:      return MTLSamplerAddressModeRepeat;
+        case AddressMode::ClampToEdge: return MTLSamplerAddressModeClampToEdge;
+    }
+    return MTLSamplerAddressModeClampToEdge;
+}
+
 MTLVertexFormat toMTLVertexFormat(Format fmt) {
     switch (fmt) {
         case Format::R32F:    return MTLVertexFormatFloat;
@@ -125,6 +152,75 @@ private:
     size_t m_size = 0;
 };
 
+class MetalRHITexture final : public RHITexture {
+public:
+    MetalRHITexture(id<MTLDevice> device, const TextureDesc& desc)
+        : m_desc(desc) {
+        MTLTextureDescriptor* td = [[MTLTextureDescriptor alloc] init];
+        td.pixelFormat = toMTLPixelFormat(desc.format);
+        td.width = desc.width;
+        td.height = desc.height;
+        td.depth = desc.depth;
+        td.mipmapLevelCount = desc.mipLevels;
+        td.arrayLength = desc.arrayLayers;
+        if (desc.type == TextureType::Tex2DArray) {
+            td.textureType = MTLTextureType2DArray;
+        } else if (desc.type == TextureType::Tex3D) {
+            td.textureType = MTLTextureType3D;
+        } else if (desc.type == TextureType::Cube) {
+            td.textureType = MTLTextureTypeCube;
+        } else {
+            td.textureType = MTLTextureType2D;
+        }
+        td.storageMode = MTLStorageModePrivate;
+
+        MTLTextureUsage u = 0;
+        if (hasFlag(desc.usage, TextureUsage::Sampled)) u |= MTLTextureUsageShaderRead;
+        if (hasFlag(desc.usage, TextureUsage::Storage)) u |= MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead;
+        if (hasFlag(desc.usage, TextureUsage::ColorAttachment) || hasFlag(desc.usage, TextureUsage::DepthAttachment)) {
+            u |= MTLTextureUsageRenderTarget;
+        }
+        td.usage = u;
+
+        m_texture = [device newTextureWithDescriptor:td];
+        if (!m_texture) {
+            throw std::runtime_error("Failed to create Metal texture");
+        }
+    }
+
+    uint32_t getWidth() const override { return m_desc.width; }
+    uint32_t getHeight() const override { return m_desc.height; }
+    Format getFormat() const override { return m_desc.format; }
+    id<MTLTexture> getMTLTexture() const { return m_texture; }
+
+private:
+    TextureDesc m_desc;
+    id<MTLTexture> m_texture = nil;
+};
+
+class MetalRHISampler final : public RHISampler {
+public:
+    MetalRHISampler(id<MTLDevice> device, const SamplerDesc& desc) {
+        MTLSamplerDescriptor* sd = [[MTLSamplerDescriptor alloc] init];
+        sd.minFilter = toMTLFilter(desc.minFilter);
+        sd.magFilter = toMTLFilter(desc.magFilter);
+        sd.mipFilter = (desc.minFilter == Filter::Nearest) ? MTLSamplerMipFilterNearest : MTLSamplerMipFilterLinear;
+        sd.sAddressMode = toMTLAddressMode(desc.addressU);
+        sd.tAddressMode = toMTLAddressMode(desc.addressV);
+        sd.rAddressMode = toMTLAddressMode(desc.addressW);
+        sd.maxAnisotropy = static_cast<NSUInteger>(std::max(1.0f, desc.maxAnisotropy));
+        if (desc.compareEnable) {
+            sd.compareFunction = MTLCompareFunctionLessEqual;
+        }
+        m_sampler = [device newSamplerStateWithDescriptor:sd];
+    }
+
+    id<MTLSamplerState> getMTLSampler() const { return m_sampler; }
+
+private:
+    id<MTLSamplerState> m_sampler = nil;
+};
+
 class MetalRHIPipeline final : public RHIPipeline {
 public:
     bool isValid() const override {
@@ -162,16 +258,34 @@ public:
         endActiveEncoders();
     }
 
-    void beginRenderPass(const ClearColor& clearColor, float clearDepth = 1.0f) override {
+    void beginRenderPass(const RenderPassDesc& desc) override {
         endActiveEncoders();
-        m_rpDesc.colorAttachments[0].clearColor = MTLClearColorMake(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
-        m_rpDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
-        m_rpDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-        m_rpDesc.depthAttachment.clearDepth = static_cast<double>(clearDepth);
-        m_rpDesc.depthAttachment.loadAction = MTLLoadActionClear;
-        m_rpDesc.depthAttachment.storeAction = MTLStoreActionDontCare;
+        MTLRenderPassDescriptor* rpd = m_rpDesc;
+        if (desc.colorTarget != nullptr) {
+            rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+            const auto& mtlColor = static_cast<const MetalRHITexture&>(*desc.colorTarget);
+            rpd.colorAttachments[0].texture = mtlColor.getMTLTexture();
+            rpd.colorAttachments[0].clearColor = MTLClearColorMake(desc.clearColor.r, desc.clearColor.g, desc.clearColor.b, desc.clearColor.a);
+            rpd.colorAttachments[0].loadAction = desc.clearColorEnable ? MTLLoadActionClear : MTLLoadActionLoad;
+            rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-        m_renderEncoder = [m_cmdBuf renderCommandEncoderWithDescriptor:m_rpDesc];
+            if (desc.depthTarget != nullptr) {
+                const auto& mtlDepth = static_cast<const MetalRHITexture&>(*desc.depthTarget);
+                rpd.depthAttachment.texture = mtlDepth.getMTLTexture();
+                rpd.depthAttachment.clearDepth = static_cast<double>(desc.clearDepth);
+                rpd.depthAttachment.loadAction = desc.clearDepthEnable ? MTLLoadActionClear : MTLLoadActionLoad;
+                rpd.depthAttachment.storeAction = MTLStoreActionStore;
+            }
+        } else {
+            rpd.colorAttachments[0].clearColor = MTLClearColorMake(desc.clearColor.r, desc.clearColor.g, desc.clearColor.b, desc.clearColor.a);
+            rpd.colorAttachments[0].loadAction = desc.clearColorEnable ? MTLLoadActionClear : MTLLoadActionLoad;
+            rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+            rpd.depthAttachment.clearDepth = static_cast<double>(desc.clearDepth);
+            rpd.depthAttachment.loadAction = desc.clearDepthEnable ? MTLLoadActionClear : MTLLoadActionLoad;
+            rpd.depthAttachment.storeAction = MTLStoreActionDontCare;
+        }
+
+        m_renderEncoder = [m_cmdBuf renderCommandEncoderWithDescriptor:rpd];
         m_currentPipeline = nullptr;
     }
 
@@ -268,6 +382,26 @@ public:
         }
     }
 
+    void bindTexture(uint32_t slot, const RHITexture& texture, const RHISampler& sampler) override {
+        const auto& mtlTex = static_cast<const MetalRHITexture&>(texture);
+        const auto& mtlSamp = static_cast<const MetalRHISampler&>(sampler);
+        if (m_currentPipeline && m_currentPipeline->isCompute) {
+            if (m_computeEncoder) {
+                [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
+                [m_computeEncoder setSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
+            }
+        } else if (m_renderEncoder) {
+            [m_renderEncoder setFragmentTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
+            [m_renderEncoder setFragmentSamplerState:mtlSamp.getMTLSampler() atIndex:static_cast<NSUInteger>(slot)];
+        }
+    }
+
+    void bindStorageTexture(uint32_t slot, const RHITexture& texture) override {
+        if (!m_computeEncoder) return;
+        const auto& mtlTex = static_cast<const MetalRHITexture&>(texture);
+        [m_computeEncoder setTexture:mtlTex.getMTLTexture() atIndex:static_cast<NSUInteger>(slot)];
+    }
+
     void pushConstants(ShaderStage stages, const void* data, size_t size) override {
         if (!m_currentPipeline) return;
         if (m_currentPipeline->isCompute) {
@@ -328,6 +462,11 @@ public:
     void bufferBarrier(const RHIBuffer& buffer) override {
         (void)buffer;
         // Metal tracks resource hazards automatically across encoders/dispatches on the same command buffer.
+    }
+
+    void textureBarrier(const RHITexture& texture, TextureLayout oldLayout, TextureLayout newLayout) override {
+        (void)texture; (void)oldLayout; (void)newLayout;
+        // Metal tracks texture hazards automatically across encoders/dispatches on the same command buffer.
     }
 
     void endActiveEncoders() {
@@ -505,6 +644,14 @@ void MetalDevice::uploadBuffer(RHIBuffer& dst, const void* data, size_t size) {
     [cmd waitUntilCompleted];
 }
 
+std::unique_ptr<RHITexture> MetalDevice::createTexture(const TextureDesc& desc) {
+    return std::make_unique<MetalRHITexture>(m_impl->device, desc);
+}
+
+std::unique_ptr<RHISampler> MetalDevice::createSampler(const SamplerDesc& desc) {
+    return std::make_unique<MetalRHISampler>(m_impl->device, desc);
+}
+
 std::unique_ptr<RHIPipeline> MetalDevice::createGraphicsPipeline(const GraphicsPipelineDesc& desc) {
     auto pipe = std::make_unique<MetalRHIPipeline>();
     pipe->isCompute = false;
@@ -540,7 +687,7 @@ std::unique_ptr<RHIPipeline> MetalDevice::createGraphicsPipeline(const GraphicsP
         rpd.vertexDescriptor = vd;
     }
 
-    rpd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
+    rpd.colorAttachments[0].pixelFormat = toMTLPixelFormat(desc.colorFormat);
     if (desc.blendEnable) {
         rpd.colorAttachments[0].blendingEnabled = YES;
         rpd.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
@@ -550,7 +697,11 @@ std::unique_ptr<RHIPipeline> MetalDevice::createGraphicsPipeline(const GraphicsP
         rpd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
         rpd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorZero;
     }
-    rpd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    if (desc.colorFormat == Format::BGRA8_SRGB) {
+        rpd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    } else {
+        rpd.depthAttachmentPixelFormat = desc.hasDepth ? toMTLPixelFormat(desc.depthFormat) : MTLPixelFormatInvalid;
+    }
 
     MTLRenderPipelineReflection* reflection = nil;
     NSError* err = nil;

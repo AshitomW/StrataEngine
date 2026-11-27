@@ -11,6 +11,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 skyColorHorizon;
     vec4 terrainParams;
     vec4 biomeParams;
+    vec4 postParams;
+    vec4 atmosphereParams;
 } ubo;
 
 layout(std430, set = 1, binding = 0) readonly buffer TerrainSSBO {

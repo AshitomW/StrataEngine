@@ -4,11 +4,17 @@
 #include "core/VulkanContext.hpp"
 #include "core/VulkanSwapchain.hpp"
 #include "core/VulkanBuffer.hpp"
+#include "core/VulkanImage.hpp"
 #include "core/VulkanResource.hpp"
 #include <array>
+#include <functional>
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 namespace rhi {
+
+class VulkanDevice;
 
 class VulkanRHIBuffer final : public RHIBuffer {
 public:
@@ -33,6 +39,40 @@ private:
     VkDescriptorSet m_ssboSet = VK_NULL_HANDLE;
 };
 
+class VulkanRHITexture final : public RHITexture {
+public:
+    VulkanRHITexture(VulkanDevice& owner, const VulkanContext& context, const TextureDesc& desc);
+    ~VulkanRHITexture() override;
+
+    uint32_t getWidth() const override { return m_desc.width; }
+    uint32_t getHeight() const override { return m_desc.height; }
+    Format getFormat() const override { return m_desc.format; }
+
+    VkImage getVkImage() const { return m_image.getImage(); }
+    VkImageView getVkImageView() const { return m_image.getView(); }
+    VkFormat getVkFormat() const { return m_image.getFormat(); }
+    VkImageAspectFlags getAspectMask() const { return m_aspectMask; }
+    const TextureDesc& getDesc() const { return m_desc; }
+
+private:
+    VulkanDevice& m_owner;
+    VulkanImage m_image;
+    TextureDesc m_desc;
+    VkImageAspectFlags m_aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+};
+
+class VulkanRHISampler final : public RHISampler {
+public:
+    VulkanRHISampler(const VulkanContext& context, const SamplerDesc& desc);
+    ~VulkanRHISampler() override;
+
+    VkSampler getVkSampler() const { return m_sampler; }
+
+private:
+    VkDevice m_device = VK_NULL_HANDLE;
+    VkSampler m_sampler = VK_NULL_HANDLE;
+};
+
 class VulkanRHIPipeline final : public RHIPipeline {
 public:
     VulkanRHIPipeline() = default;
@@ -40,17 +80,21 @@ public:
 
     vkh::PipelineLayoutHandle layout;
     vkh::PipelineHandle pipeline;
+    VkDescriptorSetLayout dynamicSetLayout = VK_NULL_HANDLE; // set 2 (graphics) or set 0 (compute with textures)
     bool isCompute = false;
     bool usesUBO = false;
     bool usesSSBO = false;
+    uint32_t numStorageBuffers = 0;
+    uint32_t numSampledTextures = 0;
+    uint32_t numStorageTextures = 0;
 };
 
 class VulkanRHICommandList final : public RHICommandList {
 public:
-    VulkanRHICommandList(VkCommandBuffer cmd, VkRenderPass renderPass, VkFramebuffer framebuffer, VkExtent2D extent)
-        : m_cmd(cmd), m_renderPass(renderPass), m_framebuffer(framebuffer), m_extent(extent) {}
+    VulkanRHICommandList(VulkanDevice& device, VkCommandBuffer cmd, VkDescriptorPool dynamicPool)
+        : m_device(device), m_cmd(cmd), m_dynamicPool(dynamicPool) {}
 
-    void beginRenderPass(const ClearColor& clearColor, float clearDepth = 1.0f) override;
+    void beginRenderPass(const RenderPassDesc& desc) override;
     void endRenderPass() override;
 
     void setViewport(float x, float y, float width, float height) override;
@@ -61,6 +105,8 @@ public:
 
     void bindUniformBuffer(uint32_t slot, const RHIBuffer& buffer) override;
     void bindStorageBuffer(uint32_t slot, const RHIBuffer& buffer) override;
+    void bindTexture(uint32_t slot, const RHITexture& texture, const RHISampler& sampler) override;
+    void bindStorageTexture(uint32_t slot, const RHITexture& texture) override;
     void pushConstants(ShaderStage stages, const void* data, size_t size) override;
 
     void bindVertexBuffer(uint32_t binding, const RHIBuffer& buffer) override;
@@ -71,15 +117,32 @@ public:
     void dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
 
     void bufferBarrier(const RHIBuffer& buffer) override;
+    void textureBarrier(const RHITexture& texture, TextureLayout oldLayout, TextureLayout newLayout) override;
 
     VkCommandBuffer getVkCommandBuffer() const { return m_cmd; }
 
 private:
+    void flushDynamicDescriptors();
+
+    VulkanDevice& m_device;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
-    VkExtent2D m_extent{0, 0};
+    VkDescriptorPool m_dynamicPool = VK_NULL_HANDLE;
     const VulkanRHIPipeline* m_currentPipeline = nullptr;
+
+    struct BoundTexture {
+        bool valid = false;
+        VkImageView view = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+    };
+    struct BoundStorageImage {
+        bool valid = false;
+        VkImageView view = VK_NULL_HANDLE;
+    };
+
+    static constexpr size_t MAX_BOUND_SLOTS = 8;
+    std::array<BoundTexture, MAX_BOUND_SLOTS> m_boundTextures{};
+    std::array<BoundStorageImage, MAX_BOUND_SLOTS> m_boundStorageImages{};
+    bool m_descriptorsDirty = false;
 };
 
 class VulkanDevice final : public RHIDevice {
@@ -104,6 +167,9 @@ public:
     std::unique_ptr<RHIBuffer> createBuffer(size_t size, BufferUsage usage, MemoryUsage memoryUsage) override;
     void uploadBuffer(RHIBuffer& dst, const void* data, size_t size) override;
 
+    std::unique_ptr<RHITexture> createTexture(const TextureDesc& desc) override;
+    std::unique_ptr<RHISampler> createSampler(const SamplerDesc& desc) override;
+
     std::unique_ptr<RHIPipeline> createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
     std::unique_ptr<RHIPipeline> createComputePipeline(const ComputePipelineDesc& desc) override;
 
@@ -117,11 +183,22 @@ public:
     void renderImGui(RHICommandList& cmd) override;
     void shutdownImGui() override;
 
+    // Helpers for VulkanRHICommandList & VulkanRHITexture
+    const VulkanContext& getContext() const { return m_context; }
+    const VulkanSwapchain& getSwapchain() const { return *m_swapchain; }
+    uint32_t getCurrentImageIndex() const { return m_currentImageIndex; }
+    VkRenderPass getOrCreateOffscreenRenderPass(Format colorFormat, bool hasDepth, Format depthFormat, bool clearColor, bool clearDepth);
+    VkFramebuffer getOrCreateFramebuffer(VkRenderPass rp, VkImageView colorView, VkImageView depthView, uint32_t w, uint32_t h);
+    void invalidateFramebuffersForView(VkImageView view);
+
 private:
     void createDescriptorResources();
     void createCommandBuffers();
     void createSyncObjects();
     void createTimestampQueryPool();
+
+    VkDescriptorSetLayout getOrCreateGraphicsTexSetLayout(uint32_t numTextures);
+    VkDescriptorSetLayout getOrCreateComputeSetLayout(uint32_t numStorageBuffers, uint32_t numSampledTextures, uint32_t numStorageTextures);
 
 private:
     VulkanContext m_context;
@@ -130,6 +207,19 @@ private:
     vkh::DescriptorPoolHandle m_descriptorPool;
     vkh::DescriptorSetLayoutHandle m_uboSetLayout;
     vkh::DescriptorSetLayoutHandle m_ssboSetLayout;
+
+    std::array<vkh::DescriptorPoolHandle, MAX_FRAMES_IN_FLIGHT> m_dynamicPools;
+    vkh::DescriptorPoolHandle m_immediateDynamicPool;
+    std::unordered_map<uint64_t, vkh::DescriptorSetLayoutHandle> m_dynamicLayoutCache;
+
+    std::unordered_map<uint64_t, vkh::RenderPassHandle> m_renderPassCache;
+    struct FramebufferEntry {
+        VkImageView colorView = VK_NULL_HANDLE;
+        VkImageView depthView = VK_NULL_HANDLE;
+        VkRenderPass rp = VK_NULL_HANDLE;
+        VkFramebuffer fb = VK_NULL_HANDLE;
+    };
+    std::vector<FramebufferEntry> m_framebufferCache;
 
     std::array<VkCommandBuffer, MAX_FRAMES_IN_FLIGHT> m_commandBuffers{};
     std::array<vkh::SemaphoreHandle, MAX_FRAMES_IN_FLIGHT> m_imageAvailableSemaphores;

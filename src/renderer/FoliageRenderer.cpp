@@ -345,6 +345,9 @@ void FoliageRenderer::createPipeline(rhi::RHIDevice& device) {
     desc.depthWriteEnable = true;
     desc.depthCompareOp = rhi::CompareOp::LessOrEqual;
     desc.blendEnable = false;
+    desc.colorFormat = rhi::Format::RGBA16F;
+    desc.depthFormat = rhi::Format::D32F;
+    desc.hasDepth = true;
     desc.usesUniformBuffer = true;
     desc.usesStorageBuffer = false;
 

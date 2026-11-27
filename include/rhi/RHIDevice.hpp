@@ -26,6 +26,11 @@ public:
     virtual Format getFormat() const = 0;
 };
 
+class RHISampler {
+public:
+    virtual ~RHISampler() = default;
+};
+
 class RHIPipeline {
 public:
     virtual ~RHIPipeline() = default;
@@ -36,7 +41,13 @@ class RHICommandList {
 public:
     virtual ~RHICommandList() = default;
 
-    virtual void beginRenderPass(const ClearColor& clearColor, float clearDepth = 1.0f) = 0;
+    virtual void beginRenderPass(const RenderPassDesc& desc) = 0;
+    virtual void beginRenderPass(const ClearColor& clearColor, float clearDepth = 1.0f) {
+        RenderPassDesc desc{};
+        desc.clearColor = clearColor;
+        desc.clearDepth = clearDepth;
+        beginRenderPass(desc);
+    }
     virtual void endRenderPass() = 0;
 
     virtual void setViewport(float x, float y, float width, float height) = 0;
@@ -47,6 +58,8 @@ public:
 
     virtual void bindUniformBuffer(uint32_t slot, const RHIBuffer& buffer) = 0;
     virtual void bindStorageBuffer(uint32_t slot, const RHIBuffer& buffer) = 0;
+    virtual void bindTexture(uint32_t slot, const RHITexture& texture, const RHISampler& sampler) = 0;
+    virtual void bindStorageTexture(uint32_t slot, const RHITexture& texture) = 0;
     virtual void pushConstants(ShaderStage stages, const void* data, size_t size) = 0;
 
     virtual void bindVertexBuffer(uint32_t binding, const RHIBuffer& buffer) = 0;
@@ -57,6 +70,7 @@ public:
     virtual void dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) = 0;
 
     virtual void bufferBarrier(const RHIBuffer& buffer) = 0;
+    virtual void textureBarrier(const RHITexture& texture, TextureLayout oldLayout, TextureLayout newLayout) = 0;
 };
 
 class RHIDevice {
@@ -80,6 +94,9 @@ public:
 
     virtual std::unique_ptr<RHIBuffer> createBuffer(size_t size, BufferUsage usage, MemoryUsage memoryUsage) = 0;
     virtual void uploadBuffer(RHIBuffer& dst, const void* data, size_t size) = 0;
+
+    virtual std::unique_ptr<RHITexture> createTexture(const TextureDesc& desc) = 0;
+    virtual std::unique_ptr<RHISampler> createSampler(const SamplerDesc& desc) = 0;
 
     virtual std::unique_ptr<RHIPipeline> createGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
     virtual std::unique_ptr<RHIPipeline> createComputePipeline(const ComputePipelineDesc& desc) = 0;

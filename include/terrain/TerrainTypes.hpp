@@ -151,6 +151,17 @@ struct TerrainConfig {
     float waveSpeed = EngineConstants::Water::DEFAULT_WAVE_SPEED;
     float waterClarity = EngineConstants::Water::DEFAULT_WATER_CLARITY;
 
+    // Milestone 2: HDR, Physical Atmosphere & Post-Processing
+    float exposure = 1.0f;
+    bool bloomEnabled = true;
+    float bloomIntensity = 0.32f;
+    float bloomThreshold = 1.15f;
+    int toneMapper = 0; // 0: AgX, 1: ACES, 2: Reinhard
+    float turbidity = 1.0f;
+    float mieAnisotropy = 0.78f;
+    float sunIntensity = 2.6f;
+    float iblStrength = 1.0f;
+
     void toggleWater() {
         showWater = !showWater;
     }
@@ -183,6 +194,8 @@ struct GlobalUBO {
     glm::vec4 skyColorHorizon;
     glm::vec4 terrainParams;
     glm::vec4 biomeParams;
+    glm::vec4 postParams;
+    glm::vec4 atmosphereParams;
 };
 
 struct ChunkPushConstants {

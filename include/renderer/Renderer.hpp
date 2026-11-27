@@ -2,6 +2,7 @@
 
 #include "rhi/RHIDevice.hpp"
 #include "core/Frustum.hpp"
+#include "renderer/AtmosphereRenderer.hpp"
 #include "renderer/FoliageRenderer.hpp"
 #include "renderer/SkyRenderer.hpp"
 #include "renderer/WaterRenderer.hpp"
@@ -47,6 +48,7 @@ struct FoliageKey {
 class Renderer {
 public:
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+    static constexpr uint32_t BLOOM_MIP_COUNT = 5;
 
     Renderer(rhi::RHIDevice& device, GLFWwindow* window);
     ~Renderer();
@@ -68,12 +70,15 @@ public:
 private:
     void createUBOBuffers();
     void createPipelines();
+    void createScreenResources(uint32_t width, uint32_t height);
     void updateUBO(uint32_t frameIndex, const Camera& camera, const TerrainConfig& config, float time);
+    void runBloomPasses(rhi::RHICommandList& cmd, const TerrainConfig& config);
     void drawImGui(const Camera& camera, ChunkManager& chunkManager, TerrainConfig& config, HUDInfo& hudInfo);
 
 private:
     rhi::RHIDevice& m_device;
 
+    std::unique_ptr<AtmosphereRenderer> m_atmosphereRenderer;
     std::unique_ptr<FoliageRenderer> m_foliageRenderer;
     std::unique_ptr<SkyRenderer> m_skyRenderer;
     std::unique_ptr<WaterRenderer> m_waterRenderer;
@@ -81,6 +86,20 @@ private:
     std::array<std::unique_ptr<rhi::RHIBuffer>, MAX_FRAMES_IN_FLIGHT> m_uboBuffers;
     std::unique_ptr<rhi::RHIPipeline> m_solidPipeline;
     std::unique_ptr<rhi::RHIPipeline> m_wireframePipeline;
+
+    // HDR offscreen & post-process resources
+    uint32_t m_screenWidth = 0;
+    uint32_t m_screenHeight = 0;
+    std::unique_ptr<rhi::RHITexture> m_hdrColor;
+    std::unique_ptr<rhi::RHITexture> m_sceneDepth;
+    std::unique_ptr<rhi::RHITexture> m_blackFallbackTex;
+    std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT> m_bloomDownMips;
+    std::array<std::unique_ptr<rhi::RHITexture>, BLOOM_MIP_COUNT - 1> m_bloomUpMips;
+    std::unique_ptr<rhi::RHISampler> m_linearSampler;
+
+    std::unique_ptr<rhi::RHIPipeline> m_bloomDownPipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_bloomUpPipeline;
+    std::unique_ptr<rhi::RHIPipeline> m_postProcessPipeline;
 
     FoliageKey m_lastFoliageKey;
 };

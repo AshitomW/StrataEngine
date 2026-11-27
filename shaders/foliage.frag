@@ -17,21 +17,17 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 skyColorHorizon;
     vec4 terrainParams;
     vec4 biomeParams;
+    vec4 postParams;
+    vec4 atmosphereParams;
 } ubo;
 
-vec3 aces_film(vec3 x) {
-    float a = 2.51;
-    float b = 0.03;
-    float c = 2.43;
-    float d = 0.59;
-    float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-}
+const float PI = 3.14159265359;
 
 void main() {
     vec3 N = normalize(inNormal);
     vec3 L = normalize(ubo.sunDir.xyz);
     vec3 D = normalize(inWorldPos - ubo.cameraPos.xyz);
+    vec3 V = -D;
 
     float dist = length(ubo.cameraPos.xyz - inWorldPos);
     float maxDist = max(ubo.biomeParams.w, 150.0);
@@ -41,13 +37,26 @@ void main() {
         discard;
     }
 
-    float NdotL = max(dot(N, L), 0.0);
-    float wrapLight = pow(clamp(dot(N, L) * 0.35 + 0.65, 0.0, 1.0), 1.8);
-    vec3 directLight = ubo.sunColor.rgb * (NdotL * 0.70 + wrapLight * 0.30);
+    float sunIntensity = ubo.atmosphereParams.z;
+    float iblStrength = ubo.atmosphereParams.w;
+    vec3 sunRadiance = ubo.sunColor.rgb * sunIntensity;
 
-    vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a;
-    vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.35 * ubo.skyColorZenith.a;
-    vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5);
+    float NdotL = max(dot(N, L), 0.0);
+    float wrapLight = pow(clamp(dot(N, L) * 0.4 + 0.6, 0.0, 1.0), 1.8) * 0.25;
+
+    // Back-lit subsurface scattering translucency through foliage
+    vec3 backDir = normalize(L - N * 0.35);
+    float sss = pow(clamp(dot(V, -backDir), 0.0, 1.0), 3.0) * 0.45 * ubo.sunColor.a;
+
+    // Subtle specular sheen
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), 24.0) * 0.06 * step(0.0, NdotL);
+
+    vec3 directLight = sunRadiance * ((NdotL * 0.85 + wrapLight) / PI + sss / PI) + sunRadiance * spec;
+
+    vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a * 1.65;
+    vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.42 * ubo.skyColorZenith.a;
+    vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5) * iblStrength;
 
     vec3 litColor = inColor * (ambient + directLight);
 
@@ -64,14 +73,11 @@ void main() {
     vec3 horizonAtmosphere = mix(ubo.skyColorHorizon.rgb, ubo.skyColorZenith.rgb, elevation);
 
     float sunDot = max(dot(D, L), 0.0);
-    float mie = (1.0 - 0.76 * 0.76) / pow(1.0 + 0.76 * 0.76 - 2.0 * 0.76 * sunDot, 1.5) * 0.07;
-    float sunGlow = pow(sunDot, 16.0) * 0.25 + mie * 0.7;
-    vec3 fogColor = horizonAtmosphere + ubo.sunColor.rgb * sunGlow * ubo.sunColor.a;
+    float g = clamp(ubo.atmosphereParams.y, 0.1, 0.95);
+    float mie = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * sunDot, 1e-4), 1.5) * 0.06;
+    float sunGlow = pow(sunDot, 16.0) * 0.20 + mie * 0.65;
+    vec3 fogColor = horizonAtmosphere + ubo.sunColor.rgb * sunGlow * sunIntensity * 0.45 * ubo.sunColor.a;
 
     vec3 finalColor = mix(litColor, fogColor, fogFactor);
-
-    finalColor = aces_film(finalColor * 1.10);
-    finalColor = pow(finalColor, vec3(1.0 / 2.2));
-
-    outColor = vec4(finalColor, 1.0);
+    outColor = vec4(max(finalColor, vec3(0.0)), 1.0);
 }

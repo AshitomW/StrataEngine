@@ -30,6 +30,9 @@ public:
     std::unique_ptr<RHIBuffer> createBuffer(size_t size, BufferUsage usage, MemoryUsage memoryUsage) override;
     void uploadBuffer(RHIBuffer& dst, const void* data, size_t size) override;
 
+    std::unique_ptr<RHITexture> createTexture(const TextureDesc& desc) override;
+    std::unique_ptr<RHISampler> createSampler(const SamplerDesc& desc) override;
+
     std::unique_ptr<RHIPipeline> createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
     std::unique_ptr<RHIPipeline> createComputePipeline(const ComputePipelineDesc& desc) override;
 

@@ -73,6 +73,9 @@ void WaterRenderer::createPipeline(rhi::RHIDevice& device) {
     desc.depthWriteEnable = false;
     desc.depthCompareOp = rhi::CompareOp::LessOrEqual;
     desc.blendEnable = true;
+    desc.colorFormat = rhi::Format::RGBA16F;
+    desc.depthFormat = rhi::Format::D32F;
+    desc.hasDepth = true;
     desc.usesUniformBuffer = true;
     desc.usesStorageBuffer = false;
     desc.pushConstantSize = sizeof(WaterPushConstants);

@@ -20,6 +20,8 @@ layout(set = 0, binding = 0) uniform GlobalUBO {
     vec4 skyColorHorizon;
     vec4 terrainParams;
     vec4 biomeParams;
+    vec4 postParams;
+    vec4 atmosphereParams;
 } ubo;
 
 layout(push_constant) uniform WaterPC {
@@ -252,22 +254,23 @@ void main() {
     fresnel = clamp(fresnel, 0.04, 0.95);
 
     // Ray-traced Sky / Sun reflection
+    float sunIntensity = ubo.atmosphereParams.z;
     vec3 R = reflect(-V, N);
     float reflElev = clamp(R.y * 0.65 + 0.35, 0.0, 1.0);
     vec3 skyRefl = mix(ubo.skyColorHorizon.rgb, ubo.skyColorZenith.rgb, reflElev);
 
     float sunReflDot = max(dot(R, L), 0.0);
-    float sunGlint = pow(sunReflDot, 256.0) * 3.5 + pow(sunReflDot, 32.0) * 0.8;
-    vec3 reflectionColor = skyRefl + ubo.sunColor.rgb * sunGlint;
+    float sunGlint = pow(sunReflDot, 320.0) * 4.5 + pow(sunReflDot, 36.0) * 0.65;
+    vec3 reflectionColor = skyRefl + ubo.sunColor.rgb * sunGlint * sunIntensity * 0.7;
 
     // Ambient and Direct lighting on water body
-    vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a;
+    vec3 skyAmb = ubo.skyColorZenith.rgb * ubo.skyColorZenith.a * 1.4;
     vec3 groundAmb = ubo.skyColorHorizon.rgb * 0.35 * ubo.skyColorZenith.a;
-    vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5);
+    vec3 ambient = mix(groundAmb, skyAmb, N.y * 0.5 + 0.5) * ubo.atmosphereParams.w;
 
     float NdotL = max(dot(N, L), 0.0);
     float wrapLight = pow(clamp(dot(N, L) * 0.35 + 0.65, 0.0, 1.0), 1.8);
-    vec3 directLight = ubo.sunColor.rgb * (NdotL * 0.70 + wrapLight * 0.30);
+    vec3 directLight = ubo.sunColor.rgb * sunIntensity * 0.65 * (NdotL * 0.70 + wrapLight * 0.30);
     vec3 totalIllum = ambient + directLight;
 
     // Physical water body & Beer-Lambert light extinction
@@ -275,14 +278,14 @@ void main() {
     vec3 shallowWater = vec3(0.040, 0.280, 0.360);
     vec3 waterBodyColor = mix(shallowWater, deepWater, smoothstep(0.5, 6.0, waterDepth)) * (totalIllum + 0.02);
 
-    // Specular highlight
+    // Specular highlight (HDR > 1.0 triggers bloom naturally)
     vec3 H = normalize(L + V);
     float NdotH = max(dot(N, H), 0.0);
-    float specular = pow(NdotH, 320.0) * 3.5 + pow(NdotH, 48.0) * 0.7;
+    float specular = pow(NdotH, 360.0) * 4.0 + pow(NdotH, 48.0) * 0.55;
 
     vec3 waterColor = mix(waterBodyColor, reflectionColor, fresnel);
     if (L.y > -0.05) {
-        waterColor += ubo.sunColor.rgb * specular;
+        waterColor += ubo.sunColor.rgb * specular * sunIntensity * 0.75;
     }
 
     // Natural shoreline froth
@@ -310,17 +313,15 @@ void main() {
     vec3 horizonAtmosphere = mix(ubo.skyColorHorizon.rgb, ubo.skyColorZenith.rgb, elevation);
 
     float sunDot = max(dot(D, L), 0.0);
-    float mie = (1.0 - 0.76 * 0.76) / pow(1.0 + 0.76 * 0.76 - 2.0 * 0.76 * sunDot, 1.5) * 0.07;
-    float sunGlow = pow(sunDot, 16.0) * 0.25 + mie * 0.7;
-    vec3 fogColor = horizonAtmosphere + ubo.sunColor.rgb * sunGlow * ubo.sunColor.a;
+    float g = clamp(ubo.atmosphereParams.y, 0.1, 0.95);
+    float mie = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * sunDot, 1e-4), 1.5) * 0.06;
+    float sunGlow = pow(sunDot, 16.0) * 0.20 + mie * 0.65;
+    vec3 fogColor = horizonAtmosphere + ubo.sunColor.rgb * sunGlow * sunIntensity * 0.45 * ubo.sunColor.a;
 
     vec3 finalColor = mix(waterColor, fogColor, fogFactor);
-
-    finalColor = aces_film(finalColor * 1.10);
-    finalColor = pow(finalColor, vec3(1.0 / 2.2));
 
     // Alpha: transparent in shallows, smoothly opaque towards horizon fog
     float baseAlpha = clamp(0.40 + fresnel * 0.45 + smoothstep(0.1, 2.5, waterDepth) * 0.45 + totalFoam * 0.3, 0.15, 0.95);
     float alpha = mix(baseAlpha, 1.0, smoothstep(0.65, 0.92, distFactor));
-    outColor = vec4(finalColor, alpha);
+    outColor = vec4(max(finalColor, vec3(0.0)), alpha);
 }
